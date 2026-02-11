@@ -1,0 +1,99 @@
+Design a high-end, investor-ready SaaS product prototype for a platform called “AuditPilot”.
+
+AuditPilot is a developer-focused SaaS that automatically audits and FIXES web applications by creating GitHub pull requests.
+
+STYLE & BRAND
+- Minimalist, modern, enterprise-grade SaaS UI
+- White background with subtle mesh gradients
+- Primary gradient: Electric Blue → Deep Violet
+- Flat design, clean geometry
+- Sans-serif typography (Inter / SF Pro style)
+- Dribbble / Stripe / Vercel-quality design
+- Calm, trustworthy, technical aesthetic
+
+TARGET USERS
+- SaaS founders
+- Developers
+- Digital agencies
+- CTOs
+
+PRODUCT CONCEPT
+Instead of long audit reports, AuditPilot:
+- Connects to GitHub
+- Scans web apps for security, performance, and accessibility issues
+- Automatically creates pull requests with fixes
+
+DESIGN A CLICKABLE PROTOTYPE WITH THE FOLLOWING SCREENS:
+
+1. LANDING / HERO SCREEN
+- Logo: AuditPilot
+- Headline: “Audit and fix your web app automatically.”
+- Subtext: “Security, performance & accessibility — fixed via GitHub pull requests.”
+- Primary CTA button: “Connect GitHub”
+- Secondary text: “Free audit for early users”
+
+2. AUTH / ONBOARDING SCREEN
+- Simple sign-in with GitHub
+- Text: “Get started in under 60 seconds”
+- Minimal distractions
+
+3. REPOSITORY SELECTION SCREEN
+- List of GitHub repositories
+- Each repo shows:
+  - Repo name
+  - Framework badge (Next.js / React)
+- Primary CTA: “Run Audit”
+
+4. AUDIT IN PROGRESS SCREEN
+- Animated progress steps:
+  - Scanning security vulnerabilities
+  - Checking performance metrics
+  - Analyzing accessibility
+- Clean loading visuals
+- Calm, professional feedback
+
+5. AUDIT RESULTS DASHBOARD (CORE VALUE SCREEN)
+- Overall health score (e.g. 72/100)
+- Breakdown cards:
+  - Security issues (critical / medium)
+  - Performance issues (Core Web Vitals)
+  - Accessibility issues (WCAG)
+- Each issue row includes:
+  - Severity level
+  - File name
+  - “Auto-fix available” badge
+
+6. AUTO-FIX CONFIRMATION SCREEN
+- Selected issues highlighted
+- Button: “Fix Automatically”
+- Confirmation text:
+  “AuditPilot will create a pull request with safe, reversible fixes.”
+
+7. PULL REQUEST CREATED SCREEN (WOW MOMENT)
+- GitHub-style PR card
+- PR title: “Fix security & performance issues”
+- Files changed list
+- Status: Ready for review
+- Message:
+  “Fixes generated automatically by AuditPilot”
+
+8. PRICING & MONETIZATION SCREEN
+- Simple pricing tiers:
+  - Starter – $49/month
+  - Pro – $149/month
+  - Agency – $399/month
+- CTA: “Start Free Audit”
+- Small note: “No credit card required for audit”
+
+INTERACTION
+- Buttons should feel clickable
+- Clear user flow from landing → PR creation
+- Feels realistic and buildable
+
+OUTPUT REQUIREMENTS
+- Desktop-first SaaS UI (1440px width)
+- Investor-friendly visuals
+- Clear UX hierarchy
+- Professional, production-grade look
+- No placeholder lorem ipsum
+- Realistic SaaS copy
