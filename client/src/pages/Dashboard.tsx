@@ -439,19 +439,23 @@ function CodeDiffView({ issues, onBack }: { issues: Issue[], onBack: () => void 
               </div>
               <Badge variant="outline" className="text-[10px] uppercase">{issue.type}</Badge>
             </div>
-            <div className="p-0 font-mono text-xs overflow-x-auto">
-              <table className="w-full border-collapse">
-                <tbody>
-                  <tr className="bg-red-50 text-red-700">
-                    <td className="w-8 text-center border-r border-red-100 py-1 select-none text-red-300">-</td>
-                    <td className="px-4 py-1 whitespace-pre">{issue.oldCode}</td>
-                  </tr>
-                  <tr className="bg-green-50 text-green-700">
-                    <td className="w-8 text-center border-r border-green-100 py-1 select-none text-green-300">+</td>
-                    <td className="px-4 py-1 whitespace-pre">{issue.newCode}</td>
-                  </tr>
-                </tbody>
-              </table>
+            <div className="grid grid-cols-2 divide-x divide-slate-200 font-mono text-[11px]">
+              {/* Left Side: Old Code */}
+              <div className="bg-slate-50/50">
+                <div className="px-3 py-1.5 bg-red-50/50 border-b border-red-100/50 text-red-600 text-[10px] font-bold uppercase tracking-wider">Original Code</div>
+                <div className="p-4 overflow-x-auto whitespace-pre text-red-700 bg-red-50/20 h-full">
+                  <span className="inline-block w-4 mr-2 text-red-300 select-none">-</span>
+                  {issue.oldCode}
+                </div>
+              </div>
+              {/* Right Side: Fixed Code */}
+              <div className="bg-slate-50/50">
+                <div className="px-3 py-1.5 bg-green-50/50 border-b border-green-100/50 text-green-600 text-[10px] font-bold uppercase tracking-wider">Fixed Code</div>
+                <div className="p-4 overflow-x-auto whitespace-pre text-green-700 bg-green-50/20 h-full">
+                  <span className="inline-block w-4 mr-2 text-green-300 select-none">+</span>
+                  {issue.newCode}
+                </div>
+              </div>
             </div>
           </div>
         ))}
