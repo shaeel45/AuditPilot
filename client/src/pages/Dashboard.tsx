@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
 
 // Types
-type Step = 'repos' | 'audit' | 'results' | 'fix' | 'pr';
+type Step = 'repos' | 'audit' | 'results' | 'fix' | 'pr' | 'diff';
 
 type Issue = {
   id: string;
@@ -17,22 +17,60 @@ type Issue = {
   file: string;
   description: string;
   fixAvailable: boolean;
+  oldCode?: string;
+  newCode?: string;
 };
 
 // Mock Data
 const REPOS = [
-  { id: 1, name: "auditpilot-frontend", framework: "React", lang: "TypeScript", stars: 124 },
-  { id: 2, name: "auditpilot-api", framework: "Node.js", lang: "TypeScript", stars: 89 },
-  { id: 3, name: "marketing-site", framework: "Next.js", lang: "TypeScript", stars: 12 },
-  { id: 4, name: "design-system", framework: "Storybook", lang: "TypeScript", stars: 45 },
+  { id: 1, name: "auditpilot-frontend", framework: "React", lang: "TypeScript", stars: 124, branches: ["master", "develop", "feature/auth"] },
+  { id: 2, name: "auditpilot-api", framework: "Node.js", lang: "TypeScript", stars: 89, branches: ["master", "staging"] },
+  { id: 3, name: "marketing-site", framework: "Next.js", lang: "TypeScript", stars: 12, branches: ["master"] },
+  { id: 4, name: "design-system", framework: "Storybook", lang: "TypeScript", stars: 45, branches: ["master", "v2-dev"] },
 ];
 
 const ISSUES: Issue[] = [
-  { id: "1", type: "security", severity: "critical", file: "package.json", description: "Vulnerable dependency: 'lodash' < 4.17.21", fixAvailable: true },
-  { id: "2", type: "performance", severity: "medium", file: "src/App.tsx", description: "Large layout shift detected on initial render", fixAvailable: true },
-  { id: "3", type: "accessibility", severity: "medium", file: "src/components/Button.tsx", description: "Missing aria-label on icon-only button", fixAvailable: true },
+  { 
+    id: "1", 
+    type: "security", 
+    severity: "critical", 
+    file: "package.json", 
+    description: "Vulnerable dependency: 'lodash' < 4.17.21", 
+    fixAvailable: true,
+    oldCode: '"lodash": "^4.17.15",',
+    newCode: '"lodash": "^4.17.21",'
+  },
+  { 
+    id: "2", 
+    type: "performance", 
+    severity: "medium", 
+    file: "src/App.tsx", 
+    description: "Large layout shift detected on initial render", 
+    fixAvailable: true,
+    oldCode: '<img src={hero} />',
+    newCode: '<img src={hero} width={1200} height={600} loading="eager" />'
+  },
+  { 
+    id: "3", 
+    type: "accessibility", 
+    severity: "medium", 
+    file: "src/components/Button.tsx", 
+    description: "Missing aria-label on icon-only button", 
+    fixAvailable: true,
+    oldCode: '<button><Icon /></button>',
+    newCode: '<button aria-label="Close modal"><Icon /></button>'
+  },
   { id: "4", type: "security", severity: "medium", file: "server/index.ts", description: "Missing rate limiting middleware", fixAvailable: false },
-  { id: "5", type: "performance", severity: "low", file: "public/hero.png", description: "Image not optimized (2.4MB)", fixAvailable: true },
+  { 
+    id: "5", 
+    type: "performance", 
+    severity: "low", 
+    file: "public/hero.png", 
+    description: "Image not optimized (2.4MB)", 
+    fixAvailable: true,
+    oldCode: '// Original high-res image',
+    newCode: '// Optimized WebP alternative'
+  },
 ];
 
 export default function Dashboard() {
@@ -53,7 +91,7 @@ export default function Dashboard() {
         
         <div className="p-4 space-y-1">
           <div className="px-3 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wider">Platform</div>
-          <NavItem active={step === 'repos'} icon={<Code2 className="w-4 h-4" />} label="Repositories" />
+          <NavItem active={step === 'repos'} icon={<Code2 className="w-4 h-4" />} label="Repositories" onClick={() => goToStep('repos')} />
           <NavItem active={false} icon={<GitPullRequest className="w-4 h-4" />} label="Pull Requests" />
           <NavItem active={false} icon={<Shield className="w-4 h-4" />} label="Security Policy" />
           
@@ -82,6 +120,7 @@ export default function Dashboard() {
             {step === 'results' && "Audit Results"}
             {step === 'fix' && "Review Fixes"}
             {step === 'pr' && "Pull Request Created"}
+            {step === 'diff' && "Review Changes"}
           </h1>
           {step !== 'repos' && (
             <Button variant="ghost" size="sm" onClick={() => setStep('repos')} className="text-slate-500">
@@ -95,7 +134,8 @@ export default function Dashboard() {
             {step === 'repos' && <RepoSelection key="repos" onSelect={(repo) => { setSelectedRepo(repo); goToStep('audit'); }} />}
             {step === 'audit' && <AuditProgress key="audit" onComplete={() => goToStep('results')} />}
             {step === 'results' && <AuditResults key="results" issues={ISSUES} onFix={() => goToStep('fix')} />}
-            {step === 'fix' && <AutoFixConfirmation key="fix" issues={ISSUES.filter(i => i.fixAvailable)} onConfirm={() => goToStep('pr')} onBack={() => goToStep('results')} />}
+            {step === 'fix' && <AutoFixConfirmation key="fix" issues={ISSUES.filter(i => i.fixAvailable)} onConfirm={() => goToStep('pr')} onBack={() => goToStep('results')} onReviewDiff={() => goToStep('diff')} />}
+            {step === 'diff' && <CodeDiffView key="diff" issues={ISSUES.filter(i => i.fixAvailable)} onBack={() => goToStep('fix')} />}
             {step === 'pr' && <PRSuccess key="pr" repo={selectedRepo} />}
           </AnimatePresence>
         </div>
@@ -104,9 +144,12 @@ export default function Dashboard() {
   );
 }
 
-function NavItem({ active, icon, label }: { active: boolean, icon: any, label: string }) {
+function NavItem({ active, icon, label, onClick }: { active: boolean, icon: any, label: string, onClick?: () => void }) {
   return (
-    <div className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer transition-colors ${active ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}>
+    <div 
+      onClick={onClick}
+      className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer transition-colors ${active ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
+    >
       {icon}
       {label}
     </div>
@@ -325,7 +368,7 @@ function SummaryCard({ title, count, color, bg, icon: Icon }: any) {
 // ------------------------------------------------------------------
 // STEP 4: AUTO-FIX CONFIRMATION
 // ------------------------------------------------------------------
-function AutoFixConfirmation({ issues, onConfirm, onBack }: { issues: Issue[], onConfirm: () => void, onBack: () => void }) {
+function AutoFixConfirmation({ issues, onConfirm, onBack, onReviewDiff }: { issues: Issue[], onConfirm: () => void, onBack: () => void, onReviewDiff: () => void }) {
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="max-w-2xl mx-auto">
       <div className="text-center mb-8">
@@ -337,8 +380,12 @@ function AutoFixConfirmation({ issues, onConfirm, onBack }: { issues: Issue[], o
       </div>
 
       <Card className="mb-8 border-indigo-100 shadow-xl shadow-indigo-500/5">
-        <CardHeader className="bg-slate-50/50 border-b border-slate-100 pb-4">
+        <CardHeader className="bg-slate-50/50 border-b border-slate-100 pb-4 flex flex-row items-center justify-between">
           <CardTitle className="text-sm font-medium text-slate-500 uppercase tracking-wider">Changes to be applied</CardTitle>
+          <Button variant="ghost" size="sm" onClick={onReviewDiff} className="text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 h-8">
+            <Eye className="w-4 h-4 mr-2" />
+            Review Changes
+          </Button>
         </CardHeader>
         <div className="divide-y divide-slate-100">
           {issues.map(issue => (
@@ -369,57 +416,171 @@ function AutoFixConfirmation({ issues, onConfirm, onBack }: { issues: Issue[], o
 }
 
 // ------------------------------------------------------------------
-// STEP 5: PR SUCCESS
+// STEP 4.5: CODE DIFF VIEW
 // ------------------------------------------------------------------
-function PRSuccess({ repo }: { repo: any }) {
+function CodeDiffView({ issues, onBack }: { issues: Issue[], onBack: () => void }) {
   return (
-    <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="flex flex-col items-center justify-center py-12">
-      <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-8 animate-bounce">
-        <Check className="w-10 h-10 text-green-600" />
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <div className="flex items-center gap-4 mb-6">
+        <Button variant="ghost" size="sm" onClick={onBack}>
+          <ArrowLeft className="w-4 h-4 mr-2" />
+          Back to Summary
+        </Button>
+        <h2 className="text-xl font-bold text-slate-900">Review Code Changes</h2>
       </div>
-      
-      <h2 className="text-3xl font-bold text-slate-900 mb-4 text-center">Pull Request Created!</h2>
-      <p className="text-slate-600 text-center max-w-md mb-10">
-        We've generated a PR for <span className="font-semibold text-slate-900">{repo?.name || 'your-repo'}</span> with security and performance fixes.
-      </p>
 
-      <Card className="w-full max-w-2xl bg-white border border-slate-200 shadow-xl overflow-hidden mb-10">
-        <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex items-center gap-2">
-           <Github className="w-5 h-5 text-slate-700" />
-           <span className="text-slate-600 font-medium">auditpilot / {repo?.name || 'frontend'}</span>
-           <span className="text-slate-400 mx-2">/</span>
-           <span className="text-slate-900 font-medium">Pull Request #42</span>
-        </div>
-        <div className="p-8">
-           <div className="flex items-start gap-4">
-             <div className="flex-1">
-               <h3 className="text-xl font-bold text-slate-900 mb-2">Fix security vulnerabilities & optimize performance</h3>
-               <div className="flex items-center gap-2 mb-6">
-                 <Badge className="bg-green-100 text-green-700 hover:bg-green-100 border-none">Open</Badge>
-                 <span className="text-slate-500 text-sm">auditpilot-bot wants to merge 4 commits into master</span>
-               </div>
-               
-               <div className="space-y-4 text-slate-600 text-sm">
-                 <p>This PR was automatically generated by AuditPilot. It addresses the following issues:</p>
-                 <ul className="list-disc pl-5 space-y-1">
-                   <li>Upgrades <code>lodash</code> to v4.17.21 to fix CVE-2021-23337</li>
-                   <li>Adds <code>width</code> and <code>height</code> attributes to images to reduce CLS</li>
-                   <li>Adds missing <code>aria-label</code> to buttons</li>
-                 </ul>
-               </div>
-             </div>
-           </div>
-        </div>
-        <div className="bg-slate-50 p-4 border-t border-slate-200 flex justify-end">
-           <Button className="bg-[#2da44e] hover:bg-[#2c974b] text-white font-semibold">
-             View on GitHub
-           </Button>
-        </div>
-      </Card>
+      <div className="space-y-6">
+        {issues.map(issue => (
+          <div key={issue.id} className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+            <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Code2 className="w-4 h-4 text-slate-500" />
+                <span className="text-sm font-mono font-medium text-slate-700">{issue.file}</span>
+              </div>
+              <Badge variant="outline" className="text-[10px] uppercase">{issue.type}</Badge>
+            </div>
+            <div className="p-0 font-mono text-xs overflow-x-auto">
+              <table className="w-full border-collapse">
+                <tbody>
+                  <tr className="bg-red-50 text-red-700">
+                    <td className="w-8 text-center border-r border-red-100 py-1 select-none text-red-300">-</td>
+                    <td className="px-4 py-1 whitespace-pre">{issue.oldCode}</td>
+                  </tr>
+                  <tr className="bg-green-50 text-green-700">
+                    <td className="w-8 text-center border-r border-green-100 py-1 select-none text-green-300">+</td>
+                    <td className="px-4 py-1 whitespace-pre">{issue.newCode}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))}
+      </div>
 
-      <Button variant="outline" onClick={() => window.location.reload()}>
-        Audit Another Repository
-      </Button>
+      <div className="mt-8 flex justify-end">
+        <Button onClick={onBack} size="lg" className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-600/20">
+          Done Reviewing
+        </Button>
+      </div>
     </motion.div>
   );
 }
+
+// ------------------------------------------------------------------
+// STEP 5: PR SUCCESS
+// ------------------------------------------------------------------
+function PRSuccess({ repo }: { repo: any }) {
+  const [targetBranch, setTargetBranch] = useState(repo?.branches?.[0] || 'master');
+  const [isMerging, setIsMerging] = useState(false);
+  const [isMerged, setIsMerged] = useState(false);
+
+  const handleMerge = () => {
+    setIsMerging(true);
+    setTimeout(() => {
+      setIsMerging(false);
+      setIsMerged(true);
+    }, 2000);
+  };
+
+  return (
+    <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="flex flex-col items-center justify-center py-12">
+      {!isMerged ? (
+        <>
+          <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-8 animate-bounce">
+            <Check className="w-10 h-10 text-green-600" />
+          </div>
+          
+          <h2 className="text-3xl font-bold text-slate-900 mb-4 text-center">Pull Request Created!</h2>
+          <p className="text-slate-600 text-center max-w-md mb-10">
+            We've generated a PR for <span className="font-semibold text-slate-900">{repo?.name || 'your-repo'}</span> with security and performance fixes.
+          </p>
+
+          <Card className="w-full max-w-2xl bg-white border border-slate-200 shadow-xl overflow-hidden mb-10">
+            <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Github className="w-5 h-5 text-slate-700" />
+                <span className="text-slate-600 font-medium">auditpilot / {repo?.name || 'frontend'}</span>
+                <span className="text-slate-400 mx-2">/</span>
+                <span className="text-slate-900 font-medium">Pull Request #42</span>
+              </div>
+              <Badge className="bg-green-100 text-green-700 hover:bg-green-100 border-none">Open</Badge>
+            </div>
+            
+            <div className="p-8">
+              <h3 className="text-xl font-bold text-slate-900 mb-6">Fix security vulnerabilities & optimize performance</h3>
+              
+              <div className="space-y-6">
+                <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
+                  <h4 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
+                    <GitPullRequest className="w-4 h-4" />
+                    Merge Destination
+                  </h4>
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1">
+                      <label className="text-xs text-slate-500 mb-1 block uppercase tracking-wider font-semibold">Select Destination Branch</label>
+                      <select 
+                        value={targetBranch}
+                        onChange={(e) => setTargetBranch(e.target.value)}
+                        className="w-full h-10 px-3 rounded-md border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      >
+                        {repo?.branches?.map((b: string) => (
+                          <option key={b} value={b}>{b}</option>
+                        )) || <option value="master">master</option>}
+                      </select>
+                    </div>
+                    <div className="pt-5">
+                      <Button 
+                        onClick={handleMerge}
+                        disabled={isMerging}
+                        className="bg-[#2da44e] hover:bg-[#2c974b] text-white font-semibold h-10"
+                      >
+                        {isMerging ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <GitPullRequest className="w-4 h-4 mr-2" />}
+                        Merge to {targetBranch}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3 text-slate-600 text-sm">
+                  <p className="font-medium text-slate-900">PR Summary:</p>
+                  <ul className="list-disc pl-5 space-y-1">
+                    <li>Upgrades <code>lodash</code> to v4.17.21</li>
+                    <li>Adds <code>width</code> and <code>height</code> to images</li>
+                    <li>Adds missing <code>aria-label</code> to buttons</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+            
+            <div className="bg-slate-50 p-4 border-t border-slate-200 flex justify-between items-center">
+               <span className="text-xs text-slate-500 italic">generated automatically by AuditPilot</span>
+               <Button variant="outline" size="sm" className="text-slate-700">
+                 View Original on GitHub
+               </Button>
+            </div>
+          </Card>
+        </>
+      ) : (
+        <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="text-center">
+          <div className="w-20 h-20 bg-indigo-100 rounded-full flex items-center justify-center mb-8 mx-auto">
+            <CheckCircle2 className="w-10 h-10 text-indigo-600" />
+          </div>
+          <h2 className="text-3xl font-bold text-slate-900 mb-4">Successfully Merged!</h2>
+          <p className="text-slate-600 mb-10 max-w-md">
+            The changes have been merged into the <span className="font-semibold">{targetBranch}</span> branch of <span className="font-semibold">{repo?.name}</span>.
+          </p>
+          <Button variant="outline" onClick={() => window.location.reload()}>
+            Back to Dashboard
+          </Button>
+        </motion.div>
+      )}
+
+      {!isMerged && (
+        <Button variant="ghost" onClick={() => window.location.reload()} className="text-slate-400">
+          Start New Audit
+        </Button>
+      )}
+    </motion.div>
+  );
+}
+
