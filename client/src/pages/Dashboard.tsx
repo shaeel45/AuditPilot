@@ -6,9 +6,11 @@ import { Progress } from "@/components/ui/progress";
 import { Check, Github, ArrowRight, Shield, Zap, Eye, GitPullRequest, Code2, AlertCircle, CheckCircle2, Loader2, ArrowLeft } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
+import { useAudits, useRepoAudit } from "@/hooks/use-audits";
+import { useRepos, useAuthStatus } from "@/hooks/use-repos";
 
 // Types
-type Step = 'repos' | 'audit' | 'results' | 'fix' | 'pr' | 'diff';
+type Step = 'repos' | 'audit' | 'results' | 'fix' | 'pr' | 'diff' | 'audits';
 
 type Issue = {
   id: string;
@@ -30,43 +32,43 @@ const REPOS = [
 ];
 
 const ISSUES: Issue[] = [
-  { 
-    id: "1", 
-    type: "security", 
-    severity: "critical", 
-    file: "package.json", 
-    description: "Vulnerable dependency: 'lodash' < 4.17.21", 
+  {
+    id: "1",
+    type: "security",
+    severity: "critical",
+    file: "package.json",
+    description: "Vulnerable dependency: 'lodash' < 4.17.21",
     fixAvailable: true,
     oldCode: '"lodash": "^4.17.15",',
     newCode: '"lodash": "^4.17.21",'
   },
-  { 
-    id: "2", 
-    type: "performance", 
-    severity: "medium", 
-    file: "src/App.tsx", 
-    description: "Large layout shift detected on initial render", 
+  {
+    id: "2",
+    type: "performance",
+    severity: "medium",
+    file: "src/App.tsx",
+    description: "Large layout shift detected on initial render",
     fixAvailable: true,
     oldCode: '<img src={hero} />',
     newCode: '<img src={hero} width={1200} height={600} loading="eager" />'
   },
-  { 
-    id: "3", 
-    type: "accessibility", 
-    severity: "medium", 
-    file: "src/components/Button.tsx", 
-    description: "Missing aria-label on icon-only button", 
+  {
+    id: "3",
+    type: "accessibility",
+    severity: "medium",
+    file: "src/components/Button.tsx",
+    description: "Missing aria-label on icon-only button",
     fixAvailable: true,
     oldCode: '<button><Icon /></button>',
     newCode: '<button aria-label="Close modal"><Icon /></button>'
   },
   { id: "4", type: "security", severity: "medium", file: "server/index.ts", description: "Missing rate limiting middleware", fixAvailable: false },
-  { 
-    id: "5", 
-    type: "performance", 
-    severity: "low", 
-    file: "public/hero.png", 
-    description: "Image not optimized (2.4MB)", 
+  {
+    id: "5",
+    type: "performance",
+    severity: "low",
+    file: "public/hero.png",
+    description: "Image not optimized (2.4MB)",
     fixAvailable: true,
     oldCode: '// Original high-res image',
     newCode: '// Optimized WebP alternative'
@@ -76,7 +78,19 @@ const ISSUES: Issue[] = [
 export default function Dashboard() {
   const [step, setStep] = useState<Step>('repos');
   const [selectedRepo, setSelectedRepo] = useState<any>(null);
-  
+  const [realAuditIssues, setRealAuditIssues] = useState<any[]>([]);
+  const { data: audits, isLoading: isLoadingAudits } = useAudits();
+  const { data: repos, isLoading: isLoadingRepos } = useRepos();
+  const { data: authStatus, isLoading: isLoadingAuth } = useAuthStatus();
+  const auditMutation = useRepoAudit();
+  const [, setLocation] = useLocation();
+
+  useEffect(() => {
+    if (!isLoadingAuth && authStatus && !authStatus.authenticated) {
+      setLocation("/");
+    }
+  }, [authStatus, isLoadingAuth, setLocation]);
+
   // Navigation handling
   const goToStep = (s: Step) => setStep(s);
 
@@ -88,13 +102,13 @@ export default function Dashboard() {
           <div className="w-6 h-6 rounded bg-gradient-to-br from-indigo-600 to-violet-600 flex items-center justify-center text-white text-xs font-bold mr-2">A</div>
           <span className="font-bold text-slate-800">AuditPilot</span>
         </div>
-        
+
         <div className="p-4 space-y-1">
           <div className="px-3 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wider">Platform</div>
           <NavItem active={step === 'repos'} icon={<Code2 className="w-4 h-4" />} label="Repositories" onClick={() => goToStep('repos')} />
+          <NavItem active={step === 'audits' as any} icon={<Shield className="w-4 h-4" />} label="Audits" onClick={() => goToStep('audits' as any)} />
           <NavItem active={false} icon={<GitPullRequest className="w-4 h-4" />} label="Pull Requests" />
-          <NavItem active={false} icon={<Shield className="w-4 h-4" />} label="Security Policy" />
-          
+
           <div className="mt-8 px-3 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wider">Account</div>
           <NavItem active={false} icon={<Zap className="w-4 h-4" />} label="Billing" />
           <NavItem active={false} icon={<Eye className="w-4 h-4" />} label="Settings" />
@@ -116,6 +130,7 @@ export default function Dashboard() {
         <header className="h-16 bg-white/80 backdrop-blur-sm border-b border-slate-200/50 flex items-center justify-between px-8 sticky top-0 z-10">
           <h1 className="text-lg font-semibold text-slate-800">
             {step === 'repos' && "Select Repository"}
+            {step === 'audits' && "Security Audits"}
             {step === 'audit' && "Running Audit..."}
             {step === 'results' && "Audit Results"}
             {step === 'fix' && "Review Fixes"}
@@ -131,12 +146,32 @@ export default function Dashboard() {
 
         <div className="max-w-5xl mx-auto p-8">
           <AnimatePresence mode="wait">
-            {step === 'repos' && <RepoSelection key="repos" onSelect={(repo) => { setSelectedRepo(repo); goToStep('audit'); }} />}
-            {step === 'audit' && <AuditProgress key="audit" onComplete={() => goToStep('results')} />}
-            {step === 'results' && <AuditResults key="results" issues={ISSUES} onFix={() => goToStep('fix')} />}
-            {step === 'fix' && <AutoFixConfirmation key="fix" issues={ISSUES.filter(i => i.fixAvailable)} onConfirm={() => goToStep('pr')} onBack={() => goToStep('results')} onReviewDiff={() => goToStep('diff')} />}
+            {step === 'repos' && (
+              <RepoSelection
+                key="repos"
+                repos={repos || []}
+                isLoading={isLoadingRepos}
+                onSelect={(repo) => {
+                  setSelectedRepo(repo);
+                  goToStep('audit');
+                  auditMutation.mutate({ owner: repo.owner.login, repo: repo.name }, {
+                    onSuccess: (data) => {
+                      setRealAuditIssues(data.issues);
+                      goToStep('results');
+                    },
+                    onError: () => {
+                      goToStep('repos');
+                    }
+                  });
+                }}
+              />
+            )}
+            {step === 'audit' && <AuditProgress key="audit" isComplete={auditMutation.isSuccess} onComplete={() => { }} />}
+            {step === 'results' && <AuditResults key="results" issues={realAuditIssues.length > 0 ? realAuditIssues : ISSUES} onFix={() => goToStep('fix')} />}
+            {step === 'fix' && <AutoFixConfirmation key="fix" issues={(realAuditIssues.length > 0 ? realAuditIssues : ISSUES).filter(i => i.fixAvailable)} onConfirm={() => goToStep('pr')} onBack={() => goToStep('results')} onReviewDiff={() => goToStep('diff')} />}
             {step === 'diff' && <CodeDiffView key="diff" issues={ISSUES.filter(i => i.fixAvailable)} onBack={() => goToStep('fix')} />}
             {step === 'pr' && <PRSuccess key="pr" repo={selectedRepo} />}
+            {step === 'audits' && <AuditsView key="audits" audits={audits || []} isLoading={isLoadingAudits} />}
           </AnimatePresence>
         </div>
       </main>
@@ -146,7 +181,7 @@ export default function Dashboard() {
 
 function NavItem({ active, icon, label, onClick }: { active: boolean, icon: any, label: string, onClick?: () => void }) {
   return (
-    <div 
+    <div
       onClick={onClick}
       className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer transition-colors ${active ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
     >
@@ -159,41 +194,57 @@ function NavItem({ active, icon, label, onClick }: { active: boolean, icon: any,
 // ------------------------------------------------------------------
 // STEP 1: REPO SELECTION
 // ------------------------------------------------------------------
-function RepoSelection({ onSelect }: { onSelect: (repo: any) => void }) {
+function RepoSelection({ repos, isLoading, onSelect }: { repos: any[], isLoading: boolean, onSelect: (repo: any) => void }) {
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
+      </div>
+    );
+  }
+
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {REPOS.map((repo) => (
-          <div 
-            key={repo.id}
-            onClick={() => onSelect(repo)}
-            className="group bg-white p-6 rounded-xl border border-slate-200 hover:border-indigo-300 hover:shadow-lg hover:shadow-indigo-500/10 cursor-pointer transition-all duration-200"
-          >
-            <div className="flex justify-between items-start mb-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-slate-100 rounded-lg group-hover:bg-indigo-50 transition-colors">
-                  <Github className="w-5 h-5 text-slate-700 group-hover:text-indigo-600" />
-                </div>
-                <div>
-                  <h3 className="font-semibold text-slate-900">{repo.name}</h3>
-                  <div className="text-xs text-slate-500 flex items-center gap-2 mt-1">
-                    <span>{repo.lang}</span>
-                    <span className="w-1 h-1 bg-slate-300 rounded-full"></span>
-                    <span>Last updated 2h ago</span>
+      {repos.length === 0 ? (
+        <Card className="p-12 text-center border-dashed">
+          <Github className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-slate-900">No Repositories Found</h3>
+          <p className="text-slate-500 mb-6">Make sure you have repositories in your GitHub account.</p>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {repos.map((repo) => (
+            <div
+              key={repo.id}
+              onClick={() => onSelect(repo)}
+              className="group bg-white p-6 rounded-xl border border-slate-200 hover:border-indigo-300 hover:shadow-lg hover:shadow-indigo-500/10 cursor-pointer transition-all duration-200"
+            >
+              <div className="flex justify-between items-start mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-slate-100 rounded-lg group-hover:bg-indigo-50 transition-colors">
+                    <Github className="w-5 h-5 text-slate-700 group-hover:text-indigo-600" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-slate-900 truncate max-w-[180px]">{repo.name}</h3>
+                    <div className="text-xs text-slate-500 flex items-center gap-2 mt-1">
+                      <span>{repo.language || "Unknown"}</span>
+                      <span className="w-1 h-1 bg-slate-300 rounded-full"></span>
+                      <span>Updated {new Date(repo.updated_at).toLocaleDateString()}</span>
+                    </div>
                   </div>
                 </div>
+                <Badge variant="secondary" className="bg-slate-100 text-slate-600 group-hover:bg-indigo-100 group-hover:text-indigo-700">{repo.stargazers_count} ★</Badge>
               </div>
-              <Badge variant="secondary" className="bg-slate-100 text-slate-600 group-hover:bg-indigo-100 group-hover:text-indigo-700">{repo.framework}</Badge>
+              <div className="mt-4 flex items-center justify-between">
+                <div className="text-xs text-slate-400">{repo.default_branch} branch</div>
+                <Button size="sm" variant="ghost" className="text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 -mr-2">
+                  Run Audit <ArrowRight className="w-4 h-4 ml-1" />
+                </Button>
+              </div>
             </div>
-            <div className="mt-4 flex items-center justify-between">
-              <div className="text-xs text-slate-400">master branch</div>
-              <Button size="sm" variant="ghost" className="text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 -mr-2">
-                Run Audit <ArrowRight className="w-4 h-4 ml-1" />
-              </Button>
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </motion.div>
   );
 }
@@ -201,7 +252,7 @@ function RepoSelection({ onSelect }: { onSelect: (repo: any) => void }) {
 // ------------------------------------------------------------------
 // STEP 2: AUDIT PROGRESS
 // ------------------------------------------------------------------
-function AuditProgress({ onComplete }: { onComplete: () => void }) {
+function AuditProgress({ onComplete, isComplete }: { onComplete: () => void, isComplete: boolean }) {
   const [progress, setProgress] = useState(0);
   const [stage, setStage] = useState(0);
 
@@ -215,17 +266,21 @@ function AuditProgress({ onComplete }: { onComplete: () => void }) {
   useEffect(() => {
     const interval = setInterval(() => {
       setProgress(p => {
-        if (p >= 100) {
-          clearInterval(interval);
-          setTimeout(onComplete, 800);
-          return 100;
+        if (isComplete) {
+          if (p >= 100) {
+            clearInterval(interval);
+            return 100;
+          }
+          return Math.min(100, p + 5);
         }
-        return p + 2;
+
+        if (p >= 95) return 95;
+        return p + 1;
       });
-    }, 50);
+    }, 100);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [isComplete]);
 
   useEffect(() => {
     if (progress > 25) setStage(1);
@@ -237,11 +292,11 @@ function AuditProgress({ onComplete }: { onComplete: () => void }) {
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center justify-center py-20">
       <div className="w-full max-w-md space-y-8">
         <div className="relative pt-10">
-           <div className="flex justify-between mb-2">
-              <span className="text-sm font-medium text-indigo-600 animate-pulse">Running Audit...</span>
-              <span className="text-sm font-medium text-slate-500">{progress}%</span>
-           </div>
-           <Progress value={progress} className="h-2" />
+          <div className="flex justify-between mb-2">
+            <span className="text-sm font-medium text-indigo-600 animate-pulse">Running Audit...</span>
+            <span className="text-sm font-medium text-slate-500">{progress}%</span>
+          </div>
+          <Progress value={progress} className="h-2" />
         </div>
 
         <div className="space-y-4">
@@ -252,22 +307,20 @@ function AuditProgress({ onComplete }: { onComplete: () => void }) {
             const isPending = idx > stage;
 
             return (
-              <motion.div 
+              <motion.div
                 key={idx}
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: idx * 0.2 }}
-                className={`flex items-center gap-4 p-4 rounded-xl border transition-all duration-300 ${
-                  isCurrent 
-                    ? 'bg-white border-indigo-200 shadow-md shadow-indigo-500/5' 
-                    : isCompleted 
-                      ? 'bg-slate-50/50 border-transparent opacity-60' 
-                      : 'border-transparent opacity-30'
-                }`}
+                className={`flex items-center gap-4 p-4 rounded-xl border transition-all duration-300 ${isCurrent
+                  ? 'bg-white border-indigo-200 shadow-md shadow-indigo-500/5'
+                  : isCompleted
+                    ? 'bg-slate-50/50 border-transparent opacity-60'
+                    : 'border-transparent opacity-30'
+                  }`}
               >
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                  isCompleted ? 'bg-green-100 text-green-600' : isCurrent ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-400'
-                }`}>
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isCompleted ? 'bg-green-100 text-green-600' : isCurrent ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-400'
+                  }`}>
                   {isCompleted ? <Check className="w-5 h-5" /> : <Icon className="w-4 h-4" />}
                 </div>
                 <span className={`font-medium ${isCurrent ? 'text-slate-900' : 'text-slate-500'}`}>{s.label}</span>
@@ -285,8 +338,16 @@ function AuditProgress({ onComplete }: { onComplete: () => void }) {
 // STEP 3: AUDIT RESULTS
 // ------------------------------------------------------------------
 function AuditResults({ issues, onFix }: { issues: Issue[], onFix: () => void }) {
-  const criticalCount = issues.filter(i => i.severity === 'critical').length;
-  const score = 72;
+  const securityCount = issues.filter(i => i.type === 'security').length;
+  const performanceCount = issues.filter(i => i.type === 'performance').length;
+  const accessibilityCount = issues.filter(i => i.type === 'accessibility').length;
+
+  // Calculate a simple score: 100 base, -15 for critical, -7 for medium, -3 for low
+  const baseScore = 100;
+  const criticalPenalty = issues.filter(i => i.severity === 'critical').length * 15;
+  const mediumPenalty = issues.filter(i => i.severity === 'medium').length * 7;
+  const lowPenalty = issues.filter(i => i.severity === 'low').length * 3;
+  const score = Math.max(0, baseScore - criticalPenalty - mediumPenalty - lowPenalty);
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
@@ -296,7 +357,7 @@ function AuditResults({ issues, onFix }: { issues: Issue[], onFix: () => void })
           <div className="relative w-32 h-32 flex items-center justify-center">
             <svg className="w-full h-full transform -rotate-90">
               <circle cx="64" cy="64" r="56" stroke="currentColor" strokeWidth="8" fill="transparent" className="text-slate-100" />
-              <circle cx="64" cy="64" r="56" stroke="currentColor" strokeWidth="8" fill="transparent" strokeDasharray={351} strokeDashoffset={351 - (351 * score) / 100} className="text-indigo-600" />
+              <circle cx="64" cy="64" r="56" stroke="currentColor" strokeWidth="8" fill="transparent" strokeDasharray={351} strokeDashoffset={351 - (351 * score) / 100} className="text-indigo-600 transition-all duration-1000 ease-out" />
             </svg>
             <div className="absolute flex flex-col items-center">
               <span className="text-4xl font-bold text-slate-900">{score}</span>
@@ -306,9 +367,9 @@ function AuditResults({ issues, onFix }: { issues: Issue[], onFix: () => void })
         </div>
 
         <div className="col-span-3 grid grid-cols-3 gap-4">
-           <SummaryCard title="Security" count={2} color="text-red-600" bg="bg-red-50" icon={Shield} />
-           <SummaryCard title="Performance" count={2} color="text-amber-600" bg="bg-amber-50" icon={Zap} />
-           <SummaryCard title="Accessibility" count={1} color="text-emerald-600" bg="bg-emerald-50" icon={Eye} />
+          <SummaryCard title="Security" count={securityCount} color="text-red-600" bg="bg-red-50" icon={Shield} />
+          <SummaryCard title="Performance" count={performanceCount} color="text-amber-600" bg="bg-amber-50" icon={Zap} />
+          <SummaryCard title="Accessibility" count={accessibilityCount} color="text-emerald-600" bg="bg-emerald-50" icon={Eye} />
         </div>
       </div>
 
@@ -389,13 +450,13 @@ function AutoFixConfirmation({ issues, onConfirm, onBack, onReviewDiff }: { issu
         </CardHeader>
         <div className="divide-y divide-slate-100">
           {issues.map(issue => (
-             <div key={issue.id} className="p-4 flex items-center gap-4">
-               <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
-               <div className="flex-1">
-                 <div className="text-sm font-medium text-slate-900">{issue.description}</div>
-                 <div className="text-xs text-slate-500 font-mono mt-0.5">{issue.file}</div>
-               </div>
-             </div>
+            <div key={issue.id} className="p-4 flex items-center gap-4">
+              <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
+              <div className="flex-1">
+                <div className="text-sm font-medium text-slate-900">{issue.description}</div>
+                <div className="text-xs text-slate-500 font-mono mt-0.5">{issue.file}</div>
+              </div>
+            </div>
           ))}
         </div>
       </Card>
@@ -407,7 +468,7 @@ function AutoFixConfirmation({ issues, onConfirm, onBack, onReviewDiff }: { issu
           Create Pull Request
         </Button>
       </div>
-      
+
       <p className="text-center text-xs text-slate-400 mt-6">
         Changes are safe and reversible. You can review the code before merging.
       </p>
@@ -493,7 +554,7 @@ function PRSuccess({ repo }: { repo: any }) {
           <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-8 animate-bounce">
             <Check className="w-10 h-10 text-green-600" />
           </div>
-          
+
           <h2 className="text-3xl font-bold text-slate-900 mb-4 text-center">Pull Request Created!</h2>
           <p className="text-slate-600 text-center max-w-md mb-10">
             We've generated a PR for <span className="font-semibold text-slate-900">{repo?.name || 'your-repo'}</span> with security and performance fixes.
@@ -509,10 +570,10 @@ function PRSuccess({ repo }: { repo: any }) {
               </div>
               <Badge className="bg-green-100 text-green-700 hover:bg-green-100 border-none">Open</Badge>
             </div>
-            
+
             <div className="p-8">
               <h3 className="text-xl font-bold text-slate-900 mb-6">Fix security vulnerabilities & optimize performance</h3>
-              
+
               <div className="space-y-6">
                 <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
                   <h4 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
@@ -522,7 +583,7 @@ function PRSuccess({ repo }: { repo: any }) {
                   <div className="flex items-center gap-3">
                     <div className="flex-1">
                       <label className="text-xs text-slate-500 mb-1 block uppercase tracking-wider font-semibold">Select Destination Branch</label>
-                      <select 
+                      <select
                         value={targetBranch}
                         onChange={(e) => setTargetBranch(e.target.value)}
                         className="w-full h-10 px-3 rounded-md border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -533,7 +594,7 @@ function PRSuccess({ repo }: { repo: any }) {
                       </select>
                     </div>
                     <div className="pt-5">
-                      <Button 
+                      <Button
                         onClick={handleMerge}
                         disabled={isMerging}
                         className="bg-[#2da44e] hover:bg-[#2c974b] text-white font-semibold h-10"
@@ -555,12 +616,12 @@ function PRSuccess({ repo }: { repo: any }) {
                 </div>
               </div>
             </div>
-            
+
             <div className="bg-slate-50 p-4 border-t border-slate-200 flex justify-between items-center">
-               <span className="text-xs text-slate-500 italic">generated automatically by AuditPilot</span>
-               <Button variant="outline" size="sm" className="text-slate-700">
-                 View Original on GitHub
-               </Button>
+              <span className="text-xs text-slate-500 italic">generated automatically by AuditPilot</span>
+              <Button variant="outline" size="sm" className="text-slate-700">
+                View Original on GitHub
+              </Button>
             </div>
           </Card>
         </>
@@ -583,6 +644,64 @@ function PRSuccess({ repo }: { repo: any }) {
         <Button variant="ghost" onClick={() => window.location.reload()} className="text-slate-400">
           Start New Audit
         </Button>
+      )}
+    </motion.div>
+  );
+}
+
+// ------------------------------------------------------------------
+// STEP 6: AUDITS VIEW
+// ------------------------------------------------------------------
+function AuditsView({ audits, isLoading }: { audits: any[], isLoading: boolean }) {
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+      {audits.length === 0 ? (
+        <Card className="p-12 text-center border-dashed">
+          <Shield className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-slate-900">No Audits Found</h3>
+          <p className="text-slate-500 mb-6">Run your first security audit to see results here.</p>
+          <Button onClick={() => window.location.reload()} className="bg-indigo-600">
+            Select a Repository
+          </Button>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 gap-4">
+          {audits.map((audit: any) => (
+            <Card key={audit._id} className="p-6 hover:shadow-md transition-shadow cursor-pointer border-slate-200">
+              <div className="flex justify-between items-start">
+                <div className="flex items-center gap-4">
+                  <div className={`p-3 rounded-xl ${audit.status === 'completed' ? 'bg-green-50 text-green-600' : 'bg-indigo-50 text-indigo-600'}`}>
+                    <Shield className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900">{audit.title}</h3>
+                    <p className="text-sm text-slate-500">{audit.description || 'No description'}</p>
+                  </div>
+                </div>
+                <Badge variant={audit.status === 'completed' ? 'default' : 'secondary'} className="capitalize">
+                  {audit.status}
+                </Badge>
+              </div>
+              <div className="mt-6 flex items-center justify-between border-t pt-4 border-slate-100">
+                <div className="flex gap-6 text-sm text-slate-500">
+                  <span className="flex items-center gap-1.5"><Zap className="w-4 h-4" /> {audit.priority} Priority</span>
+                  <span className="flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4" /> {audit.items?.length || 0} Items</span>
+                </div>
+                <div className="text-xs text-slate-400">
+                  {new Date(audit.createdAt).toLocaleDateString()}
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
       )}
     </motion.div>
   );

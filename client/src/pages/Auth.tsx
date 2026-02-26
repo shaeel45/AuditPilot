@@ -10,11 +10,7 @@ export default function Auth() {
 
   const handleLogin = () => {
     setIsLoading(true);
-    // Simulate auth delay
-    setTimeout(() => {
-      setIsLoading(false);
-      setLocation("/app");
-    }, 1500);
+    window.location.href = "/api/auth/github";
   };
 
   return (
@@ -30,9 +26,9 @@ export default function Auth() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6 pt-6">
-          <Button 
-            variant="outline" 
-            size="lg" 
+          <Button
+            variant="outline"
+            size="lg"
             className="w-full h-14 text-base font-medium relative overflow-hidden group hover:border-indigo-200 hover:bg-indigo-50/50 transition-all"
             onClick={handleLogin}
             disabled={isLoading}
@@ -44,7 +40,7 @@ export default function Auth() {
             )}
             {isLoading ? "Connecting..." : "Continue with GitHub"}
           </Button>
-          
+
           <div className="text-center text-xs text-slate-400">
             By clicking continue, you agree to our <a href="#" className="underline hover:text-indigo-600">Terms of Service</a> and <a href="#" className="underline hover:text-indigo-600">Privacy Policy</a>.
           </div>
