@@ -2,6 +2,8 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import OpenAI from "openai";
+import { User } from "./models/User";
+import type { Request, Response, NextFunction } from "express";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -29,6 +31,15 @@ export async function registerRoutes(
       console.error("Failed to parse AI response as JSON. Content:", content);
       return null;
     }
+  }
+
+  // Middleware to protect routes
+  async function requireAuth(req: Request, res: Response, next: NextFunction) {
+    const token = (req.session as any).githubAccessToken;
+    if (!token) {
+      return res.status(401).json({ message: "Unauthorized: No GitHub session found" });
+    }
+    next();
   }
 
   // === Auth Routes ===
@@ -63,7 +74,34 @@ export async function registerRoutes(
 
       const tokenData: any = await tokenResponse.json();
       if (tokenData.access_token) {
-        (req.session as any).githubAccessToken = tokenData.access_token;
+        const token = tokenData.access_token;
+        (req.session as any).githubAccessToken = token;
+
+        // Fetch user profile from GitHub to store in MongoDB
+        const userProfileResponse = await fetch("https://api.github.com/user", {
+          headers: {
+            Authorization: `token ${token}`,
+            Accept: "application/vnd.github.v3+json",
+            "User-Agent": "Audit-Pilot-App"
+          },
+        });
+        const profile = await userProfileResponse.json();
+
+        // Sync with MongoDB
+        const user = await User.findOneAndUpdate(
+          { githubId: profile.id.toString() },
+          {
+            username: profile.login,
+            displayName: profile.name || profile.login,
+            avatarUrl: profile.avatar_url,
+            email: profile.email,
+            accessToken: token, // Optional: keep for background tasks
+            lastLogin: new Date(),
+          },
+          { upsert: true, new: true }
+        );
+
+        (req.session as any).userId = user._id;
         res.redirect("/app");
       } else {
         res.status(401).json({ message: "Failed to obtain access token" });
@@ -74,21 +112,29 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/auth/user", (req, res) => {
-    if ((req.session as any).githubAccessToken) {
-      res.json({ authenticated: true });
-    } else {
+  app.get("/api/auth/user", async (req, res) => {
+    const userId = (req.session as any).userId;
+    if (!userId) {
+      return res.json({ authenticated: false });
+    }
+
+    try {
+      const user = await User.findById(userId);
+      if (user) {
+        res.json({ authenticated: true, user });
+      } else {
+        res.json({ authenticated: false });
+      }
+    } catch (error) {
       res.json({ authenticated: false });
     }
   });
 
   // === Repo Routes ===
 
-  app.get("/api/repos", async (req, res) => {
+  app.get("/api/repos", requireAuth, async (req, res) => {
     const token = (req.session as any).githubAccessToken;
-    if (!token) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
+    // (requireAuth already checks token)
 
     try {
       const reposResponse = await fetch("https://api.github.com/user/repos?sort=updated&per_page=100", {
@@ -111,9 +157,9 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/pulls", async (req, res) => {
+  app.get("/api/pulls", requireAuth, async (req, res) => {
     const token = (req.session as any).githubAccessToken;
-    if (!token) return res.status(401).json({ message: "Unauthorized" });
+    // (requireAuth already checks token)
 
     try {
       // 1. Get user login to search for PRs authored by them
@@ -164,7 +210,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/repos/:owner/:repo/branches", async (req, res) => {
+  app.get("/api/repos/:owner/:repo/branches", requireAuth, async (req, res) => {
     const token = (req.session as any).githubAccessToken;
     if (!token) return res.status(401).json({ message: "Unauthorized" });
 
@@ -186,7 +232,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/repos/:owner/:repo/audit", async (req, res) => {
+  app.post("/api/repos/:owner/:repo/audit", requireAuth, async (req, res) => {
     const token = (req.session as any).githubAccessToken;
     if (!token) {
       return res.status(401).json({ message: "No GitHub session found. Please log in again." });
@@ -345,7 +391,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/repos/:owner/:repo/fix", async (req, res) => {
+  app.post("/api/repos/:owner/:repo/fix", requireAuth, async (req, res) => {
     const token = (req.session as any).githubAccessToken;
     if (!token) return res.status(401).json({ message: "Unauthorized" });
 
@@ -435,7 +481,16 @@ export async function registerRoutes(
 
       if (!prResponse.ok) {
         const err = await prResponse.json();
-        throw new Error(`Failed to create PR: ${err.message}`);
+        console.error("GitHub PR Creation Failed:", {
+          status: prResponse.status,
+          error: err,
+          payload: {
+            title: `AuditPilot: Fix security and performance issues`,
+            head: newBranchName,
+            base: targetBranch,
+          }
+        });
+        throw new Error(`Failed to create PR: ${err.message || JSON.stringify(err)}`);
       }
 
       const prData = await prResponse.json();
@@ -697,7 +752,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/repos/:owner/:repo/pulls/:number/merge", async (req, res) => {
+  app.post("/api/repos/:owner/:repo/pulls/:number/merge", requireAuth, async (req, res) => {
     const token = (req.session as any).githubAccessToken;
     if (!token) return res.status(401).json({ message: "Unauthorized" });
 
@@ -722,6 +777,35 @@ export async function registerRoutes(
       }
 
       res.json({ message: "PR merged successfully" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/repos/:owner/:repo/pulls/:number", requireAuth, async (req, res) => {
+    const token = (req.session as any).githubAccessToken;
+    const { owner, repo, number } = req.params;
+    const { base, title, body, state } = req.body;
+
+    try {
+      const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${number}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `token ${token}`,
+          "Content-Type": "application/json",
+          "Accept": "application/vnd.github.v3+json",
+          "User-Agent": "Audit-Pilot-App"
+        },
+        body: JSON.stringify({ base, title, body, state }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.message || "Failed to update Pull Request");
+      }
+
+      const updatedPR = await response.json();
+      res.json(updatedPR);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }

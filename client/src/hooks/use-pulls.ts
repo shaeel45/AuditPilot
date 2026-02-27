@@ -91,3 +91,30 @@ export function usePRMerge() {
         },
     });
 }
+
+export function useUpdatePR() {
+    const { toast } = useToast();
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: async ({ owner, repo, number, data }: { owner: string; repo: string; number: number; data: any }) => {
+            const res = await fetch(`/api/repos/${owner}/${repo}/pulls/${number}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(data),
+            });
+            if (!res.ok) {
+                const error = await res.json();
+                throw new Error(error.message || "Failed to update Pull Request");
+            }
+            return await res.json();
+        },
+        onSuccess: (data, variables) => {
+            queryClient.invalidateQueries({ queryKey: ["/api/pulls"] });
+            toast({
+                title: "PR Updated",
+                description: `Successfully updated PR #${variables.number}`,
+            });
+        },
+    });
+}

@@ -8,76 +8,29 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
 import { useAudits, useRepoAudit, useBranches, useApplyFix } from "@/hooks/use-audits";
 import { useRepos, useAuthStatus } from "@/hooks/use-repos";
-import { usePulls, usePRFiles, usePRAudit, usePRFix, usePRMerge } from "@/hooks/use-pulls";
+import { usePulls, usePRFiles, usePRAudit, usePRFix, usePRMerge, useUpdatePR } from "@/hooks/use-pulls";
 
 // Types
-type Step = 'repos' | 'audit' | 'results' | 'fix' | 'pr' | 'diff' | 'audits' | 'pulls' | 'pull_detail';
+type Step = 'repos' | 'audit' | 'results' | 'fix' | 'pr' | 'diff' | 'audits' | 'pulls' | 'pull_detail' | 'pull_results' | 'pull_diff' | 'billing' | 'settings';
 
 type Issue = {
   id: string;
   dbId?: string;
   type: 'security' | 'performance' | 'accessibility';
   severity: 'critical' | 'medium' | 'low';
-  file: string;
+  file_path: string;
   description: string;
-  fixAvailable?: boolean;
+  fix_available?: boolean;
+  old_code?: string;
+  new_code?: string;
+  // Fallback for old code
+  file?: string;
   fix?: {
     old_code: string;
     new_code: string;
   };
 };
 
-// Mock Data
-const REPOS = [
-  { id: 1, name: "auditpilot-frontend", framework: "React", lang: "TypeScript", stars: 124, branches: ["master", "develop", "feature/auth"] },
-  { id: 2, name: "auditpilot-api", framework: "Node.js", lang: "TypeScript", stars: 89, branches: ["master", "staging"] },
-  { id: 3, name: "marketing-site", framework: "Next.js", lang: "TypeScript", stars: 12, branches: ["master"] },
-  { id: 4, name: "design-system", framework: "Storybook", lang: "TypeScript", stars: 45, branches: ["master", "v2-dev"] },
-];
-
-const ISSUES: Issue[] = [
-  {
-    id: "1",
-    type: "security",
-    severity: "critical",
-    file: "package.json",
-    description: "Vulnerable dependency: 'lodash' < 4.17.21",
-    fixAvailable: true,
-    oldCode: '"lodash": "^4.17.15",',
-    newCode: '"lodash": "^4.17.21",'
-  },
-  {
-    id: "2",
-    type: "performance",
-    severity: "medium",
-    file: "src/App.tsx",
-    description: "Large layout shift detected on initial render",
-    fixAvailable: true,
-    oldCode: '<img src={hero} />',
-    newCode: '<img src={hero} width={1200} height={600} loading="eager" />'
-  },
-  {
-    id: "3",
-    type: "accessibility",
-    severity: "medium",
-    file: "src/components/Button.tsx",
-    description: "Missing aria-label on icon-only button",
-    fixAvailable: true,
-    oldCode: '<button><Icon /></button>',
-    newCode: '<button aria-label="Close modal"><Icon /></button>'
-  },
-  { id: "4", type: "security", severity: "medium", file: "server/index.ts", description: "Missing rate limiting middleware", fixAvailable: false },
-  {
-    id: "5",
-    type: "performance",
-    severity: "low",
-    file: "public/hero.png",
-    description: "Image not optimized (2.4MB)",
-    fixAvailable: true,
-    oldCode: '// Original high-res image',
-    newCode: '// Optimized WebP alternative'
-  },
-];
 
 export default function Dashboard() {
   const [step, setStep] = useState<Step>('repos');
@@ -92,10 +45,10 @@ export default function Dashboard() {
   const [, setLocation] = useLocation();
   const local = localStorage.getItem("authenticated");
   useEffect(() => {
-    if (!isLoadingAuth && authStatus && !authStatus.authenticated && !local) {
+    if (!isLoadingAuth && authStatus && !authStatus.authenticated) {
       setLocation("/");
     }
-  }, [authStatus, isLoadingAuth, setLocation, local]);
+  }, [authStatus, isLoadingAuth, setLocation]);
 
   // Navigation handling
   const goToStep = (s: Step) => setStep(s);
@@ -116,16 +69,20 @@ export default function Dashboard() {
           <NavItem active={step === 'pulls'} icon={<GitPullRequest className="w-4 h-4" />} label="Pull Requests" onClick={() => goToStep('pulls')} />
 
           <div className="mt-8 px-3 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wider">Account</div>
-          <NavItem active={false} icon={<Zap className="w-4 h-4" />} label="Billing" />
-          <NavItem active={false} icon={<Eye className="w-4 h-4" />} label="Settings" />
+          <NavItem active={step === 'billing'} icon={<Zap className="w-4 h-4" />} label="Billing" onClick={() => goToStep('billing')} />
+          <NavItem active={step === 'settings'} icon={<Eye className="w-4 h-4" />} label="Settings" onClick={() => goToStep('settings')} />
         </div>
 
         <div className="mt-auto p-4 border-t border-slate-100">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-slate-200"></div>
+            {authStatus?.user?.avatarUrl ? (
+              <img src={authStatus.user.avatarUrl} className="w-8 h-8 rounded-full" alt="User Avatar" />
+            ) : (
+              <div className="w-8 h-8 rounded-full bg-slate-200"></div>
+            )}
             <div>
-              <div className="text-sm font-medium text-slate-900">Demo User</div>
-              <div className="text-xs text-slate-500">Free Plan</div>
+              <div className="text-sm font-medium text-slate-900">{authStatus?.user?.displayName || "Loading..."}</div>
+              <div className="text-xs text-slate-500">{authStatus?.user?.username || "Fetching..."}</div>
             </div>
           </div>
         </div>
@@ -137,13 +94,16 @@ export default function Dashboard() {
           <h1 className="text-lg font-semibold text-slate-800">
             {step === 'repos' && "Select Repository"}
             {step === 'audits' && "Security Audits"}
-            {step === 'pulls' && "Open Pull Requests"}
-            {step === 'pull_detail' && `PR #${selectedPR?.number}: ${selectedPR?.title}`}
+            {step === 'pull_detail' && `PR #${selectedPR?.number}: Details`}
+            {step === 'pull_results' && `PR #${selectedPR?.number}: Audit Results`}
+            {step === 'pull_diff' && `PR #${selectedPR?.number}: AI Corrections`}
             {step === 'audit' && "Running Audit..."}
             {step === 'results' && "Audit Results"}
             {step === 'fix' && "Review Fixes"}
             {step === 'pr' && "Pull Request Created"}
             {step === 'diff' && "Review Changes"}
+            {step === 'billing' && "Subscription Plans"}
+            {step === 'settings' && "Account Settings"}
           </h1>
           {step !== 'repos' && step !== 'audits' && step !== 'pulls' && (
             <Button variant="ghost" size="sm" onClick={() => setStep('repos')} className="text-slate-500">
@@ -175,10 +135,10 @@ export default function Dashboard() {
               />
             )}
             {step === 'audit' && <AuditProgress key="audit" isComplete={auditMutation.isSuccess} onComplete={() => { }} />}
-            {step === 'results' && <AuditResults key="results" issues={realAuditIssues.length > 0 ? realAuditIssues : ISSUES} onFix={() => goToStep('fix')} />}
-            {step === 'fix' && <AutoFixConfirmation key="fix" issues={(realAuditIssues.length > 0 ? realAuditIssues : ISSUES).filter(i => i.fix || i.fixAvailable)} onConfirm={() => goToStep('pr')} onBack={() => goToStep('results')} onReviewDiff={() => goToStep('diff')} />}
-            {step === 'diff' && <CodeDiffView key="diff" issues={(realAuditIssues.length > 0 ? realAuditIssues : ISSUES).filter(i => i.fix || i.fixAvailable)} onBack={() => goToStep('fix')} />}
-            {step === 'pr' && <PRSuccess key="pr" repo={selectedRepo} issues={(realAuditIssues.length > 0 ? realAuditIssues : ISSUES).filter(i => i.fix || i.fixAvailable)} />}
+            {step === 'results' && <AuditResults key="results" issues={realAuditIssues.length > 0 ? realAuditIssues : []} onFix={() => goToStep('fix')} />}
+            {step === 'fix' && <AutoFixConfirmation key="fix" issues={(realAuditIssues.length > 0 ? realAuditIssues : []).filter(i => i.fix_available || i.fix)} onConfirm={() => goToStep('pr')} onBack={() => goToStep('results')} onReviewDiff={() => goToStep('diff')} />}
+            {step === 'diff' && <CodeDiffView key="diff" issues={(realAuditIssues.length > 0 ? realAuditIssues : []).filter(i => i.fix_available || i.fix)} onBack={() => goToStep('fix')} />}
+            {step === 'pr' && <PRSuccess key="pr" repo={selectedRepo} issues={(realAuditIssues.length > 0 ? realAuditIssues : []).filter(i => i.fix_available || i.fix)} />}
             {step === 'audits' && <AuditsView key="audits" audits={audits || []} isLoading={isLoadingAudits} />}
             {step === 'pulls' && (
               <PullsView
@@ -188,13 +148,32 @@ export default function Dashboard() {
                 }}
               />
             )}
-            {step === 'pull_detail' && (
+            {step === 'pull_detail' && selectedPR && (
               <PullDetailView
                 pr={selectedPR}
-                onBack={() => goToStep('pulls')}
-                onIssuesFound={(issues) => setPrIssues(issues)}
+                onBack={() => setStep('pulls')}
+                onReviewComplete={(issues) => {
+                  setPrIssues(issues);
+                  setStep('pull_results');
+                }}
               />
             )}
+            {step === 'pull_results' && (
+              <PRAuditResultsView
+                issues={prIssues}
+                onBack={() => setStep('pull_detail')}
+                onFixComplete={() => setStep('pull_diff')}
+                pr={selectedPR}
+              />
+            )}
+            {step === 'pull_diff' && (
+              <PRDiffView
+                pr={selectedPR}
+                onBack={() => setStep('pull_results')}
+              />
+            )}
+            {step === 'billing' && <BillingView key="billing" />}
+            {step === 'settings' && <SettingsView key="settings" user={authStatus?.user} />}
           </AnimatePresence>
         </div>
       </main>
@@ -403,31 +382,35 @@ function AuditResults({ issues, onFix }: { issues: Issue[], onFix: () => void })
           <Badge variant="outline" className="bg-white border-slate-200 text-slate-600">{issues.length} Issues Found</Badge>
         </div>
         <div className="divide-y divide-slate-100">
-          {issues.map((issue) => (
-            <div key={issue.id} className="p-6 hover:bg-slate-50 transition-colors flex items-start gap-4 group">
-              <div className={`mt-1 w-2 h-2 rounded-full ${issue.severity === 'critical' ? 'bg-red-500' : issue.severity === 'medium' ? 'bg-amber-500' : 'bg-slate-400'}`}></div>
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="font-medium text-slate-900">{issue.description}</span>
-                  {(issue.fix || issue.fixAvailable) && (
-                    <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-100 text-[10px] px-2 h-5">Auto-fix</Badge>
-                  )}
+          {issues.map((issue, idx) => {
+            const hasFix = issue.fix_available || (issue.fix && issue.fix.new_code);
+            const fileName = issue.file_path || issue.file;
+            return (
+              <div key={issue.id || issue.dbId || `issue-${idx}`} className="p-6 hover:bg-slate-50 transition-colors flex items-start gap-4 group">
+                <div className={`mt-1 w-2 h-2 rounded-full ${issue.severity === 'critical' ? 'bg-red-500' : issue.severity === 'medium' ? 'bg-amber-500' : 'bg-slate-400'}`}></div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-medium text-slate-900">{issue.description}</span>
+                    {hasFix && (
+                      <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-100 text-[10px] px-2 h-5">Auto-fix</Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-4 text-xs text-slate-500 font-mono">
+                    <span>{fileName}</span>
+                    <span className="w-1 h-1 bg-slate-300 rounded-full"></span>
+                    <span className="uppercase">{issue.type}</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-4 text-xs text-slate-500 font-mono">
-                  <span>{issue.file}</span>
-                  <span className="w-1 h-1 bg-slate-300 rounded-full"></span>
-                  <span className="uppercase">{issue.type}</span>
-                </div>
+                <Button size="sm" variant="ghost" disabled={!hasFix} className={`${hasFix ? 'text-indigo-600 hover:bg-indigo-50' : 'text-slate-300'}`}>
+                  {hasFix ? 'View Fix' : 'Manual Fix'}
+                </Button>
               </div>
-              <Button size="sm" variant="ghost" disabled={!(issue.fix || issue.fixAvailable)} className={`${(issue.fix || issue.fixAvailable) ? 'text-indigo-600 hover:bg-indigo-50' : 'text-slate-300'}`}>
-                {(issue.fix || issue.fixAvailable) ? 'View Fix' : 'Manual Fix'}
-              </Button>
-            </div>
-          ))}
+            );
+          })}
         </div>
         <div className="p-6 bg-slate-50/50 border-t border-slate-100 flex justify-end">
           <Button onClick={onFix} size="lg" className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-600/20">
-            Fix All Issues ({issues.filter(i => i.fix || i.fixAvailable).length}) <ArrowRight className="ml-2 w-4 h-4" />
+            Fix All Issues ({issues.filter(i => i.fix_available || i.fix).length}) <ArrowRight className="ml-2 w-4 h-4" />
           </Button>
         </div>
       </div>
@@ -472,15 +455,18 @@ function AutoFixConfirmation({ issues, onConfirm, onBack, onReviewDiff }: { issu
           </Button>
         </CardHeader>
         <div className="divide-y divide-slate-100">
-          {issues.map(issue => (
-            <div key={issue.id} className="p-4 flex items-center gap-4">
-              <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
-              <div className="flex-1">
-                <div className="text-sm font-medium text-slate-900">{issue.description}</div>
-                <div className="text-xs text-slate-500 font-mono mt-0.5">{issue.file}</div>
+          {issues.map((issue, idx) => {
+            const fileName = issue.file_path || issue.file;
+            return (
+              <div key={issue.id || issue.dbId || `fix-${idx}`} className="p-4 flex items-center gap-4">
+                <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
+                <div className="flex-1">
+                  <div className="text-sm font-medium text-slate-900">{issue.description}</div>
+                  <div className="text-xs text-slate-500 font-mono mt-0.5">{fileName}</div>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </Card>
 
@@ -514,35 +500,41 @@ function CodeDiffView({ issues, onBack }: { issues: Issue[], onBack: () => void 
       </div>
 
       <div className="space-y-6">
-        {issues.map((issue, idx) => (
-          <div key={idx} className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-            <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Code2 className="w-4 h-4 text-slate-500" />
-                <span className="text-sm font-mono font-medium text-slate-700">{issue.file}</span>
+        {issues.map((issue, idx) => {
+          const fileName = issue.file_path || issue.file;
+          const oldCode = issue.old_code || (issue.fix ? issue.fix.old_code : (issue as any).oldCode);
+          const newCode = issue.new_code || (issue.fix ? issue.fix.new_code : (issue as any).newCode);
+
+          return (
+            <div key={idx} className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+              <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Code2 className="w-4 h-4 text-slate-500" />
+                  <span className="text-sm font-mono font-medium text-slate-700">{fileName}</span>
+                </div>
+                <Badge variant="outline" className="text-[10px] uppercase">{issue.type}</Badge>
               </div>
-              <Badge variant="outline" className="text-[10px] uppercase">{issue.type}</Badge>
-            </div>
-            <div className="grid grid-cols-2 divide-x divide-slate-200 font-mono text-[11px]">
-              {/* Left Side: Old Code */}
-              <div className="bg-slate-50/50">
-                <div className="px-3 py-1.5 bg-red-50/50 border-b border-red-100/50 text-red-600 text-[10px] font-bold uppercase tracking-wider">Original Code</div>
-                <div className="p-4 overflow-x-auto whitespace-pre text-red-700 bg-red-50/20 h-full">
-                  <span className="inline-block w-4 mr-2 text-red-300 select-none">-</span>
-                  {(issue.fix ? issue.fix.old_code : (issue as any).oldCode) || '// No original code'}
+              <div className="grid grid-cols-2 divide-x divide-slate-200 font-mono text-[11px]">
+                {/* Left Side: Old Code */}
+                <div className="bg-slate-50/50">
+                  <div className="px-3 py-1.5 bg-red-50/50 border-b border-red-100/50 text-red-600 text-[10px] font-bold uppercase tracking-wider">Original Code</div>
+                  <div className="p-4 overflow-x-auto whitespace-pre text-red-700 bg-red-50/20 h-full">
+                    <span className="inline-block w-4 mr-2 text-red-300 select-none">-</span>
+                    {oldCode || '// No original code'}
+                  </div>
+                </div>
+                {/* Right Side: Fixed Code */}
+                <div className="bg-slate-50/50">
+                  <div className="px-3 py-1.5 bg-green-50/50 border-b border-green-100/50 text-green-600 text-[10px] font-bold uppercase tracking-wider">Fixed Code</div>
+                  <div className="p-4 overflow-x-auto whitespace-pre text-green-700 bg-green-50/20 h-full">
+                    <span className="inline-block w-4 mr-2 text-green-300 select-none">+</span>
+                    {newCode || '// No replacement code'}
+                  </div>
                 </div>
               </div>
-              {/* Right Side: Fixed Code */}
-              <div className="bg-slate-50/50">
-                <div className="px-3 py-1.5 bg-green-50/50 border-b border-green-100/50 text-green-600 text-[10px] font-bold uppercase tracking-wider">Fixed Code</div>
-                <div className="p-4 overflow-x-auto whitespace-pre text-green-700 bg-green-50/20 h-full">
-                  <span className="inline-block w-4 mr-2 text-green-300 select-none">+</span>
-                  {(issue.fix ? issue.fix.new_code : (issue as any).newCode) || '// No replacement code'}
-                </div>
-              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="mt-8 flex justify-end">
@@ -571,9 +563,17 @@ function PRSuccess({ repo, issues }: { repo: any, issues: Issue[] }) {
   }, [branches, targetBranch]);
 
   const handleCreatePR = () => {
+    const owner = repo?.owner?.login || repo?.owner;
+    const name = repo?.name;
+
+    if (!owner || !name) {
+      console.error("Missing repo owner or name for PR creation", repo);
+      return;
+    }
+
     fixMutation.mutate({
-      owner: repo.owner.login,
-      repo: repo.name,
+      owner,
+      repo: name,
       issues,
       targetBranch
     }, {
@@ -800,27 +800,233 @@ function PullsView({ onSelect }: { onSelect: (pr: any) => void }) {
 // ------------------------------------------------------------------
 // STEP 8: PR DETAIL VIEW
 // ------------------------------------------------------------------
-function PullDetailView({ pr, onBack, onIssuesFound }: { pr: any, onBack: () => void, onIssuesFound: (issues: any[]) => void }) {
-  const { data: files, isLoading: isLoadingFiles } = usePRFiles(pr.repo.owner, pr.repo.name, pr.number);
+function PullDetailView({ pr, onBack, onReviewComplete }: { pr: any, onBack: () => void, onReviewComplete: (issues: any[]) => void }) {
+  const repoOwner = pr.repo?.owner || pr.owner?.login || pr.owner;
+  const repoName = pr.repo?.name || pr.name;
+
+  const { data: files, isLoading: isLoadingFiles } = usePRFiles(repoOwner, repoName, pr.number);
+  const { data: branches } = useBranches(repoOwner, repoName);
   const auditMutation = usePRAudit();
-  const fixMutation = usePRFix();
   const mergeMutation = usePRMerge();
-  const [issues, setIssues] = useState<any[]>([]);
-  const [isAudited, setIsAudited] = useState(false);
+  const updatePRMutation = useUpdatePR();
+  const [targetBranch, setTargetBranch] = useState(pr.base?.ref || 'master');
 
   const handleAudit = () => {
-    auditMutation.mutate({ owner: pr.repo.owner, repo: pr.repo.name, number: pr.number }, {
+    auditMutation.mutate({ owner: repoOwner, repo: repoName, number: pr.number }, {
       onSuccess: (data) => {
-        setIssues(data.issues || []);
-        onIssuesFound(data.issues || []);
-        setIsAudited(true);
+        onReviewComplete(data.issues || []);
       }
     });
   };
 
-  const handleFix = () => {
-    fixMutation.mutate({ owner: pr.repo.owner, repo: pr.repo.name, number: pr.number, issues });
+  const handleMerge = () => {
+    mergeMutation.mutate({ owner: repoOwner, repo: repoName, number: pr.number }, {
+      onSuccess: () => onBack()
+    });
   };
+
+  const handleBranchChange = (newBranch: string) => {
+    setTargetBranch(newBranch);
+    updatePRMutation.mutate({
+      owner: repoOwner,
+      repo: repoName,
+      number: pr.number,
+      data: { base: newBranch }
+    });
+  };
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+      <div className="flex items-center justify-between">
+        <Button variant="ghost" size="sm" onClick={onBack}>
+          <ArrowLeft className="w-4 h-4 mr-2" /> Back to Pull Requests
+        </Button>
+        <div className="flex gap-2">
+          <Badge className="bg-green-100 text-green-700 hover:bg-green-100 border-none capitalize">{pr.state}</Badge>
+          <Badge variant="outline">#{pr.number}</Badge>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-6">
+          <Card className="border-slate-200">
+            <CardHeader className="bg-slate-50/50 border-b border-slate-100 py-4 px-6">
+              <CardTitle className="text-base font-bold text-slate-800">PR Info: {pr.title}</CardTitle>
+            </CardHeader>
+            <CardContent className="p-6">
+              <div className="flex items-start gap-4 mb-6">
+                <img src={pr.user.avatar_url} className="w-10 h-10 rounded-full border border-slate-200" alt="" />
+                <div>
+                  <div className="font-semibold text-slate-900">{pr.user.login}</div>
+                  <div className="text-xs text-slate-500">opened this pull request on {new Date(pr.created_at).toLocaleDateString()}</div>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <h4 className="text-sm font-semibold text-slate-700">Changed Files ({files?.length || 0})</h4>
+                <div className="space-y-2">
+                  {files?.map((file: any) => (
+                    <div key={file.filename} className="flex items-center justify-between p-3 rounded-lg border border-slate-100 bg-slate-50/50">
+                      <div className="flex items-center gap-3">
+                        <Code2 className="w-4 h-4 text-slate-500" />
+                        <span className="text-sm font-mono text-slate-700">{file.filename}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-green-600 font-bold">+{file.additions}</span>
+                        <span className="text-[10px] text-red-600 font-bold">-{file.deletions}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="space-y-6">
+          <Card className="border-indigo-200 bg-indigo-50/30 overflow-hidden">
+            <div className="h-1 bg-indigo-500" />
+            <CardHeader>
+              <CardTitle className="text-indigo-900 flex items-center gap-2">
+                <Shield className="w-5 h-5 text-indigo-600" /> AI Review
+              </CardTitle>
+              <CardDescription className="text-indigo-700/80">
+                Audit the specific code changes in this PR for vulnerabilities and performance issues.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button
+                onClick={handleAudit}
+                disabled={auditMutation.isPending}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-200"
+              >
+                {auditMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Zap className="w-4 h-4 mr-2" />}
+                Review with AI
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader className="pb-3 text-sm font-semibold text-slate-500 uppercase tracking-wider">GitHub Actions</CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider px-1">Merge Into Branch</label>
+                <select
+                  value={targetBranch}
+                  onChange={(e) => handleBranchChange(e.target.value)}
+                  disabled={updatePRMutation.isPending}
+                  className="w-full h-9 rounded-md border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                >
+                  {branches?.map((b: string) => (
+                    <option key={b} value={b}>{b}</option>
+                  ))}
+                </select>
+                {updatePRMutation.isPending && <p className="text-[10px] text-indigo-600 px-1 animate-pulse">Updating PR target...</p>}
+              </div>
+
+              <div className="pt-2 space-y-3">
+                <Button
+                  onClick={handleMerge}
+                  disabled={mergeMutation.isPending || updatePRMutation.isPending}
+                  className="w-full bg-[#2da44e] hover:bg-[#2c974b] text-white"
+                >
+                  <GitPullRequest className="w-4 h-4 mr-2" />
+                  Merge into {targetBranch}
+                </Button>
+                <Button variant="outline" className="w-full border-slate-200 text-slate-600" asChild>
+                  <a href={pr.html_url} target="_blank" rel="noopener noreferrer">
+                    View on GitHub <Github className="w-3 h-3 ml-2" />
+                  </a>
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+// ------------------------------------------------------------------
+// STEP 9: PR AUDIT RESULTS
+// ------------------------------------------------------------------
+function PRAuditResultsView({ issues, onBack, onFixComplete, pr }: { issues: any[], onBack: () => void, onFixComplete: () => void, pr: any }) {
+  const fixMutation = usePRFix();
+
+  const handleFix = () => {
+    fixMutation.mutate({ owner: pr.repo.owner, repo: pr.repo.name, number: pr.number, issues }, {
+      onSuccess: () => onFixComplete()
+    });
+  };
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+      <div className="flex items-center justify-between">
+        <Button variant="ghost" size="sm" onClick={onBack}>
+          <ArrowLeft className="w-4 h-4 mr-2" /> Back to details
+        </Button>
+        <Badge className={issues.length > 0 ? "bg-amber-100 text-amber-700" : "bg-green-100 text-green-700"}>
+          {issues.length} Issues Detected
+        </Badge>
+      </div>
+
+      <div className="space-y-4">
+        {issues.length === 0 ? (
+          <Card className="p-12 text-center bg-green-50 border-green-100">
+            <CheckCircle2 className="w-12 h-12 text-green-500 mx-auto mb-4" />
+            <h3 className="text-xl font-bold text-green-900">Code Looks Great!</h3>
+            <p className="text-green-700/70 max-w-md mx-auto mt-2">The AI didn't find any issues with these changes. You're good to merge.</p>
+          </Card>
+        ) : (
+          <>
+            {issues.map((issue, idx) => (
+              <Card key={idx} className="border-slate-200 hover:border-indigo-200 transition-colors">
+                <CardHeader className="flex flex-row items-start justify-between py-4">
+                  <div className="flex items-center gap-3">
+                    <div className={`p-2 rounded-lg ${issue.severity === 'critical' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'}`}>
+                      <AlertCircle className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <Badge variant="outline" className="mb-1 uppercase text-[10px]">{issue.type}</Badge>
+                      <CardTitle className="text-base text-slate-900">{issue.file}</CardTitle>
+                    </div>
+                  </div>
+                  <Badge className={issue.severity === 'critical' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}>
+                    {issue.severity}
+                  </Badge>
+                </CardHeader>
+                <CardContent className="pb-4">
+                  <p className="text-sm text-slate-600 leading-relaxed">{issue.description}</p>
+                </CardContent>
+              </Card>
+            ))}
+
+            <div className="pt-6 border-t border-slate-200 flex justify-center">
+              <Button
+                onClick={handleFix}
+                disabled={fixMutation.isPending}
+                className="w-full max-w-md bg-indigo-600 hover:bg-indigo-700 text-white h-12 text-lg shadow-xl shadow-indigo-100"
+              >
+                {fixMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : <Zap className="w-5 h-5 mr-2 fill-current" />}
+                Correct PR with AI
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+// ------------------------------------------------------------------
+// STEP 10: PR DIFF VIEW (DARK THEME)
+// ------------------------------------------------------------------
+function PRDiffView({ pr, onBack }: { pr: any, onBack: () => void }) {
+  const { data: files, isLoading } = usePRFiles(pr.repo.owner, pr.repo.name, pr.number);
+  const { data: branches } = useBranches(pr.repo.owner, pr.repo.name);
+  const mergeMutation = usePRMerge();
+  const updatePRMutation = useUpdatePR();
+  const [targetBranch, setTargetBranch] = useState(pr.base.ref);
 
   const handleMerge = () => {
     mergeMutation.mutate({ owner: pr.repo.owner, repo: pr.repo.name, number: pr.number }, {
@@ -828,102 +1034,253 @@ function PullDetailView({ pr, onBack, onIssuesFound }: { pr: any, onBack: () => 
     });
   };
 
+  const handleBranchChange = (newBranch: string) => {
+    setTargetBranch(newBranch);
+    updatePRMutation.mutate({
+      owner: pr.repo.owner,
+      repo: pr.repo.name,
+      number: pr.number,
+      data: { base: newBranch }
+    });
+  };
+
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-      <Button variant="ghost" size="sm" onClick={onBack} className="mb-2">
-        <ArrowLeft className="w-4 h-4 mr-2" /> Back to Pull Requests
-      </Button>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 space-y-6">
-          <Card className="border-slate-200">
-            <CardHeader className="bg-slate-50/50 border-b border-slate-100">
-              <CardTitle className="text-base">Changed Files</CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
-              {isLoadingFiles ? (
-                <div className="p-8 text-center text-slate-400">Loading diffs...</div>
-              ) : (
-                <div className="divide-y divide-slate-100">
-                  {files?.map((file: any) => (
-                    <div key={file.filename} className="p-4">
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-2">
-                          <Code2 className="w-4 h-4 text-slate-500" />
-                          <span className="text-sm font-mono font-medium text-slate-700">{file.filename}</span>
-                        </div>
-                        <Badge variant="outline" className="text-[10px] text-green-600">+{file.additions} / -{file.deletions}</Badge>
-                      </div>
-                      <div className="bg-slate-900 rounded-lg p-4 overflow-x-auto">
-                        <pre className="text-[11px] text-slate-300 font-mono leading-relaxed">
-                          {file.patch || "// No changes or binary file"}
-                        </pre>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+          <CheckCircle2 className="w-6 h-6 text-green-500" /> Corrections Applied
+        </h2>
+        <div className="flex items-center gap-4">
+          <select
+            value={targetBranch}
+            onChange={(e) => handleBranchChange(e.target.value)}
+            disabled={updatePRMutation.isPending}
+            className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+          >
+            {branches?.map((b: string) => (
+              <option key={b} value={b}>Merge into: {b}</option>
+            ))}
+          </select>
+          <Button
+            onClick={handleMerge}
+            disabled={mergeMutation.isPending || updatePRMutation.isPending}
+            className="bg-[#2da44e] hover:bg-[#2c974b] text-white shadow-lg shadow-green-100"
+          >
+            Merge Pull Request
+          </Button>
         </div>
+      </div>
 
-        <div className="space-y-6">
-          <Card className="border-indigo-200 bg-indigo-50/30">
-            <CardHeader>
-              <CardTitle className="text-indigo-900 flex items-center gap-2">
-                <Zap className="w-5 h-5" /> AI Review
-              </CardTitle>
-              <CardDescription className="text-indigo-700/70">Audit code changes for bugs and vulnerabilities before merging.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {!isAudited ? (
-                <Button
-                  onClick={handleAudit}
-                  disabled={auditMutation.isPending}
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
-                >
-                  {auditMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Shield className="w-4 h-4 mr-2" />}
-                  Review with AI
-                </Button>
-              ) : (
-                <div className="space-y-4">
-                  <div className={`p-4 rounded-xl border text-center ${issues.length > 0 ? 'bg-amber-50 border-amber-200' : 'bg-green-50 border-green-200'}`}>
-                    <div className="text-2xl font-bold mb-1">{issues.length}</div>
-                    <div className="text-xs font-medium uppercase tracking-wider text-slate-500">Issues Detected</div>
-                  </div>
+      <div className="space-y-8">
+        {isLoading ? (
+          <div className="py-20 text-center text-slate-400">Loading updated files...</div>
+        ) : (
+          files?.map((file: any) => (
+            <div key={file.filename} className="bg-[#0d1117] rounded-xl overflow-hidden shadow-2xl border border-slate-800">
+              <div className="bg-[#161b22] px-6 py-3 border-b border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Code2 className="w-4 h-4 text-slate-400" />
+                  <span className="text-sm font-mono text-slate-300">{file.filename}</span>
+                </div>
+                <Badge variant="outline" className="text-[#3fb950] border-[#3fb950]/30 font-mono text-[10px]">
+                  MODIFIED
+                </Badge>
+              </div>
+              <div className="overflow-x-auto">
+                <div className="p-6 font-mono text-xs leading-relaxed space-y-0.5">
+                  {file.patch ? file.patch.split('\n').map((line: string, i: number) => {
+                    const isAdded = line.startsWith('+');
+                    const isRemoved = line.startsWith('-');
+                    const isInfo = line.startsWith('@@');
 
-                  {issues.length > 0 && (
-                    <Button
-                      onClick={handleFix}
-                      disabled={fixMutation.isPending}
-                      className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
-                    >
-                      {fixMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Zap className="w-4 h-4 mr-2" />}
-                      Correct PR with AI
-                    </Button>
+                    return (
+                      <div
+                        key={i}
+                        className={`whitespace-pre px-2 -mx-2 ${isAdded ? 'bg-[#2ea04326] text-[#3fb950]' :
+                          isRemoved ? 'bg-[#f8514926] text-[#f85149]' :
+                            isInfo ? 'text-indigo-400 opacity-60' : 'text-slate-400'
+                          }`}
+                      >
+                        {line}
+                      </div>
+                    );
+                  }) : (
+                    <div className="text-slate-500 italic">No text diff available (binary or empty)</div>
                   )}
                 </div>
-              )}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="flex justify-center py-10">
+        <Button variant="ghost" className="text-slate-500" onClick={onBack}>
+          <ArrowLeft className="w-4 h-4 mr-2" /> Return to results
+        </Button>
+      </div>
+    </motion.div>
+  );
+}
+
+// ------------------------------------------------------------------
+// STEP 11: BILLING VIEW
+// ------------------------------------------------------------------
+function BillingView() {
+  const plans = [
+    {
+      name: "Starter",
+      price: "$49",
+      description: "For individuals and small side projects.",
+      features: ["5 Repositories", "Basic AI Audit", "Community Support", "Weekly Scans"],
+      buttonText: "Current Plan",
+      highlight: false
+    },
+    {
+      name: "Pro",
+      price: "$149",
+      description: "For professional developers and growing teams.",
+      features: ["Unlimited Repositories", "Advanced AI Insights", "Priority Support", "Real-time PR Audits", "Custom Fix Suggestions"],
+      buttonText: "Upgrade to Pro",
+      highlight: true
+    },
+    {
+      name: "Agency",
+      price: "$399",
+      description: "For large organizations with complex needs.",
+      features: ["SSO & SAML Auth", "On-premise AI Model", "Dedicated Success Manager", "Custom Security Policies"],
+      buttonText: "Contact Sales",
+      highlight: false
+    }
+  ];
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-10">
+      <div className="text-center space-y-2">
+        <h2 className="text-3xl font-bold text-slate-900">Choose the perfect plan</h2>
+        <p className="text-slate-500">Protect your codebase with AI-powered security and performance audits.</p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+        {plans.map((plan) => (
+          <Card key={plan.name} className={`relative flex flex-col border-slate-200 transition-all hover:shadow-xl ${plan.highlight ? 'ring-2 ring-indigo-600 scale-105 shadow-indigo-100 z-10' : ''}`}>
+            {plan.highlight && (
+              <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-indigo-600 text-white text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-widest shadow-lg">
+                Most Popular
+              </div>
+            )}
+            <CardHeader className="text-center pt-8">
+              <CardTitle className="text-xl font-bold">{plan.name}</CardTitle>
+              <div className="text-4xl font-extrabold text-slate-900 mt-4">
+                {plan.price}<span className="text-sm font-medium text-slate-500">{plan.price !== 'Custom' && '/mo'}</span>
+              </div>
+              <CardDescription className="mt-2 text-sm">{plan.description}</CardDescription>
+            </CardHeader>
+            <CardContent className="flex-1 pt-6">
+              <ul className="space-y-3">
+                {plan.features.map((feature) => (
+                  <li key={feature} className="flex items-start gap-2 text-sm text-slate-600">
+                    <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0 mt-0.5" />
+                    {feature}
+                  </li>
+                ))}
+              </ul>
             </CardContent>
+            <CardFooter className="pb-8">
+              <Button
+                variant={plan.highlight ? "default" : "outline"}
+                className={`w-full h-11 transition-all ${plan.highlight ? 'bg-indigo-600 hover:bg-indigo-700 shadow-md shadow-indigo-200 border-none' : ''}`}
+                disabled={plan.name === 'Free'}
+              >
+                {plan.buttonText}
+              </Button>
+            </CardFooter>
+          </Card>
+        ))}
+      </div>
+
+      <div className="max-w-3xl mx-auto rounded-2xl bg-slate-900 p-8 flex flex-col md:flex-row items-center gap-8 justify-between">
+        <div>
+          <h3 className="text-white font-bold text-lg">Looking for an open-source discount?</h3>
+          <p className="text-slate-400 text-sm mt-1">We offer free Pro accounts for eligible open-source projects.</p>
+        </div>
+        <Button variant="outline" className="text-white border-slate-700 hover:bg-slate-800 shrink-0">
+          Apply Now
+        </Button>
+      </div>
+    </motion.div>
+  );
+}
+
+// ------------------------------------------------------------------
+// STEP 12: SETTINGS VIEW
+// ------------------------------------------------------------------
+function SettingsView({ user }: { user: any }) {
+  return (
+    <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-8">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+        <aside className="lg:col-span-1 space-y-1">
+          <Button variant="ghost" className="w-full justify-start bg-slate-100 text-slate-900 font-medium">General</Button>
+          <Button variant="ghost" className="w-full justify-start text-slate-500 hover:text-slate-900">Notifications</Button>
+          <Button variant="ghost" className="w-full justify-start text-slate-500 hover:text-slate-900">Security</Button>
+          <Button variant="ghost" className="w-full justify-start text-slate-500 hover:text-slate-900">Advanced</Button>
+        </aside>
+
+        <div className="lg:col-span-3 space-y-8">
+          <Card className="border-slate-200">
+            <CardHeader className="border-b border-slate-100 py-4 px-6">
+              <CardTitle className="text-base font-bold">Public Profile</CardTitle>
+              <CardDescription>Your public information on AuditPilot.</CardDescription>
+            </CardHeader>
+            <CardContent className="p-6 space-y-6">
+              <div className="flex items-center gap-6">
+                <img src={user?.avatarUrl} className="w-20 h-20 rounded-full border-2 border-slate-100 shadow-sm" alt="Profile" />
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline">Change Photo</Button>
+                    <Button size="sm" variant="ghost" className="text-red-500 hover:bg-red-50 hover:text-red-600">Remove</Button>
+                  </div>
+                  <p className="text-xs text-slate-500">JPG, GIF or PNG. 1MB max.</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Display Name</label>
+                  <input
+                    type="text"
+                    defaultValue={user?.displayName}
+                    className="w-full h-10 rounded-lg border border-slate-200 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-500 uppercase">GitHub Username</label>
+                  <input
+                    type="text"
+                    defaultValue={user?.username}
+                    disabled
+                    className="w-full h-10 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm text-slate-400"
+                  />
+                </div>
+              </div>
+            </CardContent>
+            <CardFooter className="bg-slate-50/50 border-t border-slate-100 py-4 px-6 flex justify-end">
+              <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700">Update Profile</Button>
+            </CardFooter>
           </Card>
 
           <Card className="border-slate-200">
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <CheckCircle2 className="w-5 h-5 text-green-600" /> Actions
-              </CardTitle>
+            <CardHeader className="border-b border-slate-100 py-4 px-6">
+              <CardTitle className="text-base font-bold text-red-600">Danger Zone</CardTitle>
+              <CardDescription>Permanent account actions.</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <Button
-                onClick={handleMerge}
-                disabled={mergeMutation.isPending}
-                className="w-full bg-[#2da44e] hover:bg-[#2c974b] text-white"
-              >
-                {mergeMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <GitPullRequest className="w-4 h-4 mr-2" />}
-                Merge Pull Request
-              </Button>
-              <Button variant="outline" className="w-full" asChild>
-                <a href={pr.html_url} target="_blank" rel="noopener noreferrer">View on GitHub</a>
+            <CardContent className="p-6 flex items-center justify-between">
+              <div>
+                <h4 className="text-sm font-semibold text-slate-900">Delete Account</h4>
+                <p className="text-xs text-slate-500 mt-1">Once you delete your account, there is no going back. Please be certain.</p>
+              </div>
+              <Button variant="outline" className="text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700 hover:border-red-300">
+                Delete My Account
               </Button>
             </CardContent>
           </Card>
