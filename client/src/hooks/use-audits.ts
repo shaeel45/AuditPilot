@@ -222,3 +222,48 @@ export function useRepoAudit() {
         },
     });
 }
+
+export function useBranches(owner: string, repo: string) {
+    return useQuery<string[]>({
+        queryKey: ["/api/repos", owner, repo, "branches"],
+        queryFn: async () => {
+            if (!owner || !repo) return [];
+            const res = await fetch(`/api/repos/${owner}/${repo}/branches`);
+            if (!res.ok) throw new Error("Failed to fetch branches");
+            return await res.json();
+        },
+        enabled: !!owner && !!repo,
+    });
+}
+
+export function useApplyFix() {
+    const { toast } = useToast();
+
+    return useMutation({
+        mutationFn: async ({ owner, repo, issues, targetBranch }: { owner: string; repo: string; issues: any[]; targetBranch: string }) => {
+            const res = await fetch(`/api/repos/${owner}/${repo}/fix`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ issues, targetBranch }),
+            });
+            if (!res.ok) {
+                const error = await res.json();
+                throw new Error(error.message || "Failed to apply fixes");
+            }
+            return await res.json();
+        },
+        onSuccess: (data: any) => {
+            toast({
+                title: "Success",
+                description: `Created Pull Request: ${data.html_url.split('/').pop()}`,
+            });
+        },
+        onError: (error: Error) => {
+            toast({
+                title: "Error",
+                description: error.message,
+                variant: "destructive",
+            });
+        },
+    });
+}

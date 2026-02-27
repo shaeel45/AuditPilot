@@ -6,21 +6,25 @@ import { Progress } from "@/components/ui/progress";
 import { Check, Github, ArrowRight, Shield, Zap, Eye, GitPullRequest, Code2, AlertCircle, CheckCircle2, Loader2, ArrowLeft } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
-import { useAudits, useRepoAudit } from "@/hooks/use-audits";
+import { useAudits, useRepoAudit, useBranches, useApplyFix } from "@/hooks/use-audits";
 import { useRepos, useAuthStatus } from "@/hooks/use-repos";
+import { usePulls, usePRFiles, usePRAudit, usePRFix, usePRMerge } from "@/hooks/use-pulls";
 
 // Types
-type Step = 'repos' | 'audit' | 'results' | 'fix' | 'pr' | 'diff' | 'audits';
+type Step = 'repos' | 'audit' | 'results' | 'fix' | 'pr' | 'diff' | 'audits' | 'pulls' | 'pull_detail';
 
 type Issue = {
   id: string;
+  dbId?: string;
   type: 'security' | 'performance' | 'accessibility';
   severity: 'critical' | 'medium' | 'low';
   file: string;
   description: string;
-  fixAvailable: boolean;
-  oldCode?: string;
-  newCode?: string;
+  fixAvailable?: boolean;
+  fix?: {
+    old_code: string;
+    new_code: string;
+  };
 };
 
 // Mock Data
@@ -78,18 +82,20 @@ const ISSUES: Issue[] = [
 export default function Dashboard() {
   const [step, setStep] = useState<Step>('repos');
   const [selectedRepo, setSelectedRepo] = useState<any>(null);
+  const [selectedPR, setSelectedPR] = useState<any>(null);
   const [realAuditIssues, setRealAuditIssues] = useState<any[]>([]);
+  const [prIssues, setPrIssues] = useState<any[]>([]);
   const { data: audits, isLoading: isLoadingAudits } = useAudits();
   const { data: repos, isLoading: isLoadingRepos } = useRepos();
   const { data: authStatus, isLoading: isLoadingAuth } = useAuthStatus();
   const auditMutation = useRepoAudit();
   const [, setLocation] = useLocation();
-
+  const local = localStorage.getItem("authenticated");
   useEffect(() => {
-    if (!isLoadingAuth && authStatus && !authStatus.authenticated) {
+    if (!isLoadingAuth && authStatus && !authStatus.authenticated && !local) {
       setLocation("/");
     }
-  }, [authStatus, isLoadingAuth, setLocation]);
+  }, [authStatus, isLoadingAuth, setLocation, local]);
 
   // Navigation handling
   const goToStep = (s: Step) => setStep(s);
@@ -106,8 +112,8 @@ export default function Dashboard() {
         <div className="p-4 space-y-1">
           <div className="px-3 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wider">Platform</div>
           <NavItem active={step === 'repos'} icon={<Code2 className="w-4 h-4" />} label="Repositories" onClick={() => goToStep('repos')} />
-          <NavItem active={step === 'audits' as any} icon={<Shield className="w-4 h-4" />} label="Audits" onClick={() => goToStep('audits' as any)} />
-          <NavItem active={false} icon={<GitPullRequest className="w-4 h-4" />} label="Pull Requests" />
+          <NavItem active={step === 'audits'} icon={<Shield className="w-4 h-4" />} label="Audits" onClick={() => goToStep('audits')} />
+          <NavItem active={step === 'pulls'} icon={<GitPullRequest className="w-4 h-4" />} label="Pull Requests" onClick={() => goToStep('pulls')} />
 
           <div className="mt-8 px-3 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wider">Account</div>
           <NavItem active={false} icon={<Zap className="w-4 h-4" />} label="Billing" />
@@ -131,13 +137,15 @@ export default function Dashboard() {
           <h1 className="text-lg font-semibold text-slate-800">
             {step === 'repos' && "Select Repository"}
             {step === 'audits' && "Security Audits"}
+            {step === 'pulls' && "Open Pull Requests"}
+            {step === 'pull_detail' && `PR #${selectedPR?.number}: ${selectedPR?.title}`}
             {step === 'audit' && "Running Audit..."}
             {step === 'results' && "Audit Results"}
             {step === 'fix' && "Review Fixes"}
             {step === 'pr' && "Pull Request Created"}
             {step === 'diff' && "Review Changes"}
           </h1>
-          {step !== 'repos' && (
+          {step !== 'repos' && step !== 'audits' && step !== 'pulls' && (
             <Button variant="ghost" size="sm" onClick={() => setStep('repos')} className="text-slate-500">
               Cancel
             </Button>
@@ -168,10 +176,25 @@ export default function Dashboard() {
             )}
             {step === 'audit' && <AuditProgress key="audit" isComplete={auditMutation.isSuccess} onComplete={() => { }} />}
             {step === 'results' && <AuditResults key="results" issues={realAuditIssues.length > 0 ? realAuditIssues : ISSUES} onFix={() => goToStep('fix')} />}
-            {step === 'fix' && <AutoFixConfirmation key="fix" issues={(realAuditIssues.length > 0 ? realAuditIssues : ISSUES).filter(i => i.fixAvailable)} onConfirm={() => goToStep('pr')} onBack={() => goToStep('results')} onReviewDiff={() => goToStep('diff')} />}
-            {step === 'diff' && <CodeDiffView key="diff" issues={ISSUES.filter(i => i.fixAvailable)} onBack={() => goToStep('fix')} />}
-            {step === 'pr' && <PRSuccess key="pr" repo={selectedRepo} />}
+            {step === 'fix' && <AutoFixConfirmation key="fix" issues={(realAuditIssues.length > 0 ? realAuditIssues : ISSUES).filter(i => i.fix || i.fixAvailable)} onConfirm={() => goToStep('pr')} onBack={() => goToStep('results')} onReviewDiff={() => goToStep('diff')} />}
+            {step === 'diff' && <CodeDiffView key="diff" issues={(realAuditIssues.length > 0 ? realAuditIssues : ISSUES).filter(i => i.fix || i.fixAvailable)} onBack={() => goToStep('fix')} />}
+            {step === 'pr' && <PRSuccess key="pr" repo={selectedRepo} issues={(realAuditIssues.length > 0 ? realAuditIssues : ISSUES).filter(i => i.fix || i.fixAvailable)} />}
             {step === 'audits' && <AuditsView key="audits" audits={audits || []} isLoading={isLoadingAudits} />}
+            {step === 'pulls' && (
+              <PullsView
+                onSelect={(pr) => {
+                  setSelectedPR(pr);
+                  goToStep('pull_detail');
+                }}
+              />
+            )}
+            {step === 'pull_detail' && (
+              <PullDetailView
+                pr={selectedPR}
+                onBack={() => goToStep('pulls')}
+                onIssuesFound={(issues) => setPrIssues(issues)}
+              />
+            )}
           </AnimatePresence>
         </div>
       </main>
@@ -386,7 +409,7 @@ function AuditResults({ issues, onFix }: { issues: Issue[], onFix: () => void })
               <div className="flex-1">
                 <div className="flex items-center gap-2 mb-1">
                   <span className="font-medium text-slate-900">{issue.description}</span>
-                  {issue.fixAvailable && (
+                  {(issue.fix || issue.fixAvailable) && (
                     <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-100 text-[10px] px-2 h-5">Auto-fix</Badge>
                   )}
                 </div>
@@ -396,15 +419,15 @@ function AuditResults({ issues, onFix }: { issues: Issue[], onFix: () => void })
                   <span className="uppercase">{issue.type}</span>
                 </div>
               </div>
-              <Button size="sm" variant="ghost" disabled={!issue.fixAvailable} className={`${issue.fixAvailable ? 'text-indigo-600 hover:bg-indigo-50' : 'text-slate-300'}`}>
-                {issue.fixAvailable ? 'View Fix' : 'Manual Fix'}
+              <Button size="sm" variant="ghost" disabled={!(issue.fix || issue.fixAvailable)} className={`${(issue.fix || issue.fixAvailable) ? 'text-indigo-600 hover:bg-indigo-50' : 'text-slate-300'}`}>
+                {(issue.fix || issue.fixAvailable) ? 'View Fix' : 'Manual Fix'}
               </Button>
             </div>
           ))}
         </div>
         <div className="p-6 bg-slate-50/50 border-t border-slate-100 flex justify-end">
           <Button onClick={onFix} size="lg" className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-600/20">
-            Fix All Issues ({issues.filter(i => i.fixAvailable).length}) <ArrowRight className="ml-2 w-4 h-4" />
+            Fix All Issues ({issues.filter(i => i.fix || i.fixAvailable).length}) <ArrowRight className="ml-2 w-4 h-4" />
           </Button>
         </div>
       </div>
@@ -491,8 +514,8 @@ function CodeDiffView({ issues, onBack }: { issues: Issue[], onBack: () => void 
       </div>
 
       <div className="space-y-6">
-        {issues.map(issue => (
-          <div key={issue.id} className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+        {issues.map((issue, idx) => (
+          <div key={idx} className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
             <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Code2 className="w-4 h-4 text-slate-500" />
@@ -506,7 +529,7 @@ function CodeDiffView({ issues, onBack }: { issues: Issue[], onBack: () => void 
                 <div className="px-3 py-1.5 bg-red-50/50 border-b border-red-100/50 text-red-600 text-[10px] font-bold uppercase tracking-wider">Original Code</div>
                 <div className="p-4 overflow-x-auto whitespace-pre text-red-700 bg-red-50/20 h-full">
                   <span className="inline-block w-4 mr-2 text-red-300 select-none">-</span>
-                  {issue.oldCode}
+                  {(issue.fix ? issue.fix.old_code : (issue as any).oldCode) || '// No original code'}
                 </div>
               </div>
               {/* Right Side: Fixed Code */}
@@ -514,7 +537,7 @@ function CodeDiffView({ issues, onBack }: { issues: Issue[], onBack: () => void 
                 <div className="px-3 py-1.5 bg-green-50/50 border-b border-green-100/50 text-green-600 text-[10px] font-bold uppercase tracking-wider">Fixed Code</div>
                 <div className="p-4 overflow-x-auto whitespace-pre text-green-700 bg-green-50/20 h-full">
                   <span className="inline-block w-4 mr-2 text-green-300 select-none">+</span>
-                  {issue.newCode}
+                  {(issue.fix ? issue.fix.new_code : (issue as any).newCode) || '// No replacement code'}
                 </div>
               </div>
             </div>
@@ -534,46 +557,56 @@ function CodeDiffView({ issues, onBack }: { issues: Issue[], onBack: () => void 
 // ------------------------------------------------------------------
 // STEP 5: PR SUCCESS
 // ------------------------------------------------------------------
-function PRSuccess({ repo }: { repo: any }) {
-  const [targetBranch, setTargetBranch] = useState(repo?.branches?.[0] || 'master');
-  const [isMerging, setIsMerging] = useState(false);
+function PRSuccess({ repo, issues }: { repo: any, issues: Issue[] }) {
+  const { data: branches, isLoading: isLoadingBranches } = useBranches(repo?.owner?.login, repo?.name);
+  const fixMutation = useApplyFix();
+  const [targetBranch, setTargetBranch] = useState(repo?.default_branch || 'master');
   const [isMerged, setIsMerged] = useState(false);
+  const [prUrl, setPrUrl] = useState<string | null>(null);
 
-  const handleMerge = () => {
-    setIsMerging(true);
-    setTimeout(() => {
-      setIsMerging(false);
-      setIsMerged(true);
-    }, 2000);
+  useEffect(() => {
+    if (branches && branches.length > 0 && !branches.includes(targetBranch)) {
+      setTargetBranch(branches[0]);
+    }
+  }, [branches, targetBranch]);
+
+  const handleCreatePR = () => {
+    fixMutation.mutate({
+      owner: repo.owner.login,
+      repo: repo.name,
+      issues,
+      targetBranch
+    }, {
+      onSuccess: (data) => {
+        setPrUrl(data.html_url);
+        setIsMerged(true); // Treat "PR Created" as success for this flow
+      }
+    });
   };
 
   return (
     <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="flex flex-col items-center justify-center py-12">
       {!isMerged ? (
         <>
-          <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-8 animate-bounce">
-            <Check className="w-10 h-10 text-green-600" />
+          <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mb-8">
+            <GitPullRequest className="w-10 h-10 text-indigo-600" />
           </div>
 
-          <h2 className="text-3xl font-bold text-slate-900 mb-4 text-center">Pull Request Created!</h2>
+          <h2 className="text-3xl font-bold text-slate-900 mb-4 text-center">Finalize Fixes</h2>
           <p className="text-slate-600 text-center max-w-md mb-10">
-            We've generated a PR for <span className="font-semibold text-slate-900">{repo?.name || 'your-repo'}</span> with security and performance fixes.
+            Select the destination branch to merge the identified security and performance fixes.
           </p>
 
           <Card className="w-full max-w-2xl bg-white border border-slate-200 shadow-xl overflow-hidden mb-10">
             <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Github className="w-5 h-5 text-slate-700" />
-                <span className="text-slate-600 font-medium">auditpilot / {repo?.name || 'frontend'}</span>
-                <span className="text-slate-400 mx-2">/</span>
-                <span className="text-slate-900 font-medium">Pull Request #42</span>
+                <span className="text-slate-600 font-medium">{repo?.owner?.login || 'auditpilot'} / {repo?.name || 'repo'}</span>
               </div>
-              <Badge className="bg-green-100 text-green-700 hover:bg-green-100 border-none">Open</Badge>
+              <Badge variant="outline">New PR</Badge>
             </div>
 
             <div className="p-8">
-              <h3 className="text-xl font-bold text-slate-900 mb-6">Fix security vulnerabilities & optimize performance</h3>
-
               <div className="space-y-6">
                 <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
                   <h4 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
@@ -584,23 +617,26 @@ function PRSuccess({ repo }: { repo: any }) {
                     <div className="flex-1">
                       <label className="text-xs text-slate-500 mb-1 block uppercase tracking-wider font-semibold">Select Destination Branch</label>
                       <select
+                        disabled={isLoadingBranches}
                         value={targetBranch}
                         onChange={(e) => setTargetBranch(e.target.value)}
                         className="w-full h-10 px-3 rounded-md border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       >
-                        {repo?.branches?.map((b: string) => (
+                        {isLoadingBranches ? (
+                          <option>Loading branches...</option>
+                        ) : branches?.map((b: string) => (
                           <option key={b} value={b}>{b}</option>
                         )) || <option value="master">master</option>}
                       </select>
                     </div>
                     <div className="pt-5">
                       <Button
-                        onClick={handleMerge}
-                        disabled={isMerging}
+                        onClick={handleCreatePR}
+                        disabled={fixMutation.isPending || isLoadingBranches}
                         className="bg-[#2da44e] hover:bg-[#2c974b] text-white font-semibold h-10"
                       >
-                        {isMerging ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <GitPullRequest className="w-4 h-4 mr-2" />}
-                        Merge to {targetBranch}
+                        {fixMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <GitPullRequest className="w-4 h-4 mr-2" />}
+                        Create Pull Request
                       </Button>
                     </div>
                   </div>
@@ -609,41 +645,39 @@ function PRSuccess({ repo }: { repo: any }) {
                 <div className="space-y-3 text-slate-600 text-sm">
                   <p className="font-medium text-slate-900">PR Summary:</p>
                   <ul className="list-disc pl-5 space-y-1">
-                    <li>Upgrades <code>lodash</code> to v4.17.21</li>
-                    <li>Adds <code>width</code> and <code>height</code> to images</li>
-                    <li>Adds missing <code>aria-label</code> to buttons</li>
+                    {issues.slice(0, 3).map((i, idx) => (
+                      <li key={idx}>{i.description}</li>
+                    ))}
+                    {issues.length > 3 && <li>And {issues.length - 3} more fixes...</li>}
                   </ul>
                 </div>
               </div>
-            </div>
-
-            <div className="bg-slate-50 p-4 border-t border-slate-200 flex justify-between items-center">
-              <span className="text-xs text-slate-500 italic">generated automatically by AuditPilot</span>
-              <Button variant="outline" size="sm" className="text-slate-700">
-                View Original on GitHub
-              </Button>
             </div>
           </Card>
         </>
       ) : (
         <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="text-center">
-          <div className="w-20 h-20 bg-indigo-100 rounded-full flex items-center justify-center mb-8 mx-auto">
-            <CheckCircle2 className="w-10 h-10 text-indigo-600" />
+          <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-8 mx-auto animate-bounce">
+            <CheckCircle2 className="w-10 h-10 text-green-600" />
           </div>
-          <h2 className="text-3xl font-bold text-slate-900 mb-4">Successfully Merged!</h2>
+          <h2 className="text-3xl font-bold text-slate-900 mb-4">Pull Request Created!</h2>
           <p className="text-slate-600 mb-10 max-w-md">
-            The changes have been merged into the <span className="font-semibold">{targetBranch}</span> branch of <span className="font-semibold">{repo?.name}</span>.
+            The fixes have been applied to a new branch and a Pull Request has been opened against <span className="font-semibold">{targetBranch}</span>.
           </p>
-          <Button variant="outline" onClick={() => window.location.reload()}>
-            Back to Dashboard
-          </Button>
+          <div className="flex gap-4 justify-center">
+            {prUrl && (
+              <Button asChild className="bg-black hover:bg-slate-800">
+                <a href={prUrl} target="_blank" rel="noopener noreferrer">
+                  <Github className="w-4 h-4 mr-2" />
+                  View on GitHub
+                </a>
+              </Button>
+            )}
+            <Button variant="outline" onClick={() => window.location.reload()}>
+              Back to Dashboard
+            </Button>
+          </div>
         </motion.div>
-      )}
-
-      {!isMerged && (
-        <Button variant="ghost" onClick={() => window.location.reload()} className="text-slate-400">
-          Start New Audit
-        </Button>
       )}
     </motion.div>
   );
@@ -703,6 +737,198 @@ function AuditsView({ audits, isLoading }: { audits: any[], isLoading: boolean }
           ))}
         </div>
       )}
+    </motion.div>
+  );
+}
+
+// ------------------------------------------------------------------
+// STEP 7: PULL REQUESTS VIEW
+// ------------------------------------------------------------------
+function PullsView({ onSelect }: { onSelect: (pr: any) => void }) {
+  const { data: pulls, isLoading } = usePulls();
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+      {(!pulls || pulls.length === 0) ? (
+        <Card className="p-12 text-center border-dashed">
+          <GitPullRequest className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-slate-900">No Open Pull Requests</h3>
+          <p className="text-slate-500 mb-6">Create a PR on GitHub to see it here.</p>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 gap-4">
+          {pulls.map((pr: any) => (
+            <Card
+              key={pr.id}
+              onClick={() => onSelect(pr)}
+              className="p-6 hover:shadow-md transition-shadow cursor-pointer border-slate-200 group"
+            >
+              <div className="flex justify-between items-start">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center p-2 group-hover:bg-indigo-50 transition-colors">
+                    <GitPullRequest className="w-5 h-5 text-indigo-600" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">{pr.title}</h3>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-xs font-semibold text-slate-600">{pr.repo.full_name}</span>
+                      <Badge variant="outline" className="text-[10px] h-4">#{pr.number}</Badge>
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <Badge className="bg-green-100 text-green-700 hover:bg-green-100 border-none capitalize">{pr.state}</Badge>
+                  <div className="text-[10px] text-slate-400 mt-2">Opened {new Date(pr.created_at).toLocaleDateString()}</div>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+// ------------------------------------------------------------------
+// STEP 8: PR DETAIL VIEW
+// ------------------------------------------------------------------
+function PullDetailView({ pr, onBack, onIssuesFound }: { pr: any, onBack: () => void, onIssuesFound: (issues: any[]) => void }) {
+  const { data: files, isLoading: isLoadingFiles } = usePRFiles(pr.repo.owner, pr.repo.name, pr.number);
+  const auditMutation = usePRAudit();
+  const fixMutation = usePRFix();
+  const mergeMutation = usePRMerge();
+  const [issues, setIssues] = useState<any[]>([]);
+  const [isAudited, setIsAudited] = useState(false);
+
+  const handleAudit = () => {
+    auditMutation.mutate({ owner: pr.repo.owner, repo: pr.repo.name, number: pr.number }, {
+      onSuccess: (data) => {
+        setIssues(data.issues || []);
+        onIssuesFound(data.issues || []);
+        setIsAudited(true);
+      }
+    });
+  };
+
+  const handleFix = () => {
+    fixMutation.mutate({ owner: pr.repo.owner, repo: pr.repo.name, number: pr.number, issues });
+  };
+
+  const handleMerge = () => {
+    mergeMutation.mutate({ owner: pr.repo.owner, repo: pr.repo.name, number: pr.number }, {
+      onSuccess: () => onBack()
+    });
+  };
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+      <Button variant="ghost" size="sm" onClick={onBack} className="mb-2">
+        <ArrowLeft className="w-4 h-4 mr-2" /> Back to Pull Requests
+      </Button>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-6">
+          <Card className="border-slate-200">
+            <CardHeader className="bg-slate-50/50 border-b border-slate-100">
+              <CardTitle className="text-base">Changed Files</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {isLoadingFiles ? (
+                <div className="p-8 text-center text-slate-400">Loading diffs...</div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {files?.map((file: any) => (
+                    <div key={file.filename} className="p-4">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                          <Code2 className="w-4 h-4 text-slate-500" />
+                          <span className="text-sm font-mono font-medium text-slate-700">{file.filename}</span>
+                        </div>
+                        <Badge variant="outline" className="text-[10px] text-green-600">+{file.additions} / -{file.deletions}</Badge>
+                      </div>
+                      <div className="bg-slate-900 rounded-lg p-4 overflow-x-auto">
+                        <pre className="text-[11px] text-slate-300 font-mono leading-relaxed">
+                          {file.patch || "// No changes or binary file"}
+                        </pre>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="space-y-6">
+          <Card className="border-indigo-200 bg-indigo-50/30">
+            <CardHeader>
+              <CardTitle className="text-indigo-900 flex items-center gap-2">
+                <Zap className="w-5 h-5" /> AI Review
+              </CardTitle>
+              <CardDescription className="text-indigo-700/70">Audit code changes for bugs and vulnerabilities before merging.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {!isAudited ? (
+                <Button
+                  onClick={handleAudit}
+                  disabled={auditMutation.isPending}
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
+                >
+                  {auditMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Shield className="w-4 h-4 mr-2" />}
+                  Review with AI
+                </Button>
+              ) : (
+                <div className="space-y-4">
+                  <div className={`p-4 rounded-xl border text-center ${issues.length > 0 ? 'bg-amber-50 border-amber-200' : 'bg-green-50 border-green-200'}`}>
+                    <div className="text-2xl font-bold mb-1">{issues.length}</div>
+                    <div className="text-xs font-medium uppercase tracking-wider text-slate-500">Issues Detected</div>
+                  </div>
+
+                  {issues.length > 0 && (
+                    <Button
+                      onClick={handleFix}
+                      disabled={fixMutation.isPending}
+                      className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
+                    >
+                      {fixMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Zap className="w-4 h-4 mr-2" />}
+                      Correct PR with AI
+                    </Button>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-200">
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-green-600" /> Actions
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Button
+                onClick={handleMerge}
+                disabled={mergeMutation.isPending}
+                className="w-full bg-[#2da44e] hover:bg-[#2c974b] text-white"
+              >
+                {mergeMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <GitPullRequest className="w-4 h-4 mr-2" />}
+                Merge Pull Request
+              </Button>
+              <Button variant="outline" className="w-full" asChild>
+                <a href={pr.html_url} target="_blank" rel="noopener noreferrer">View on GitHub</a>
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
     </motion.div>
   );
 }

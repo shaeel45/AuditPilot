@@ -12,6 +12,25 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  // Helper to parse JSON from AI response which might include markdown code blocks
+  function safeJsonParse(content: string) {
+    try {
+      // Find the first '{' and last '}' to extract the JSON object
+      const start = content.indexOf('{');
+      const end = content.lastIndexOf('}');
+      if (start === -1 || end === -1) {
+        // Fallback to previous logic if no curlies found
+        const cleanContent = content.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
+        return JSON.parse(cleanContent);
+      }
+      const jsonStr = content.substring(start, end + 1);
+      return JSON.parse(jsonStr);
+    } catch (e) {
+      console.error("Failed to parse AI response as JSON. Content:", content);
+      return null;
+    }
+  }
+
   // === Auth Routes ===
 
   app.get("/api/auth/github", (req, res) => {
@@ -33,6 +52,7 @@ export async function registerRoutes(
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
+          "User-Agent": "Audit-Pilot-App"
         },
         body: JSON.stringify({
           client_id: clientId,
@@ -75,6 +95,7 @@ export async function registerRoutes(
         headers: {
           Authorization: `token ${token}`,
           Accept: "application/vnd.github.v3+json",
+          "User-Agent": "Audit-Pilot-App"
         },
       });
 
@@ -87,6 +108,81 @@ export async function registerRoutes(
     } catch (error) {
       console.error("GitHub Repo Error:", error);
       res.status(500).json({ message: "Failed to fetch repositories" });
+    }
+  });
+
+  app.get("/api/pulls", async (req, res) => {
+    const token = (req.session as any).githubAccessToken;
+    if (!token) return res.status(401).json({ message: "Unauthorized" });
+
+    try {
+      // 1. Get user login to search for PRs authored by them
+      const userResponse = await fetch("https://api.github.com/user", {
+        headers: {
+          Authorization: `token ${token}`,
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "Audit-Pilot-App"
+        },
+      });
+      const userData: any = await userResponse.json();
+      const userLogin = userData.login;
+
+      // 2. Search for open PRs authored by the user
+      const searchResponse = await fetch(`https://api.github.com/search/issues?q=is:open+is:pr+author:${userLogin}`, {
+        headers: {
+          Authorization: `token ${token}`,
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "Audit-Pilot-App"
+        },
+      });
+
+      if (!searchResponse.ok) throw new Error("Failed to search Pull Requests");
+      const searchData = await searchResponse.json();
+
+      // The search returns "issues" which are PRs. We need to map them to include repo data.
+      const pulls = searchData.items.map((item: any) => {
+        // repo_url is like "https://api.github.com/repos/owner/repo"
+        const repoFull = item.repository_url.replace("https://api.github.com/repos/", "");
+        const [owner, name] = repoFull.split("/");
+        return {
+          id: item.id,
+          number: item.number,
+          title: item.title,
+          state: item.state,
+          repo: { owner, name, full_name: repoFull },
+          user: { login: item.user.login, avatar_url: item.user.avatar_url },
+          created_at: item.created_at,
+          updated_at: item.updated_at,
+          html_url: item.html_url
+        };
+      });
+
+      res.json(pulls);
+    } catch (error: any) {
+      console.error("Fetch Pulls Error:", error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/repos/:owner/:repo/branches", async (req, res) => {
+    const token = (req.session as any).githubAccessToken;
+    if (!token) return res.status(401).json({ message: "Unauthorized" });
+
+    const { owner, repo } = req.params;
+    try {
+      const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/branches`, {
+        headers: {
+          Authorization: `token ${token}`,
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "Audit-Pilot-App"
+        },
+      });
+
+      if (!response.ok) throw new Error("Failed to fetch branches");
+      const branches = await response.json();
+      res.json(branches.map((b: any) => b.name));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
@@ -104,6 +200,7 @@ export async function registerRoutes(
         headers: {
           Authorization: `token ${token}`,
           Accept: "application/vnd.github.v3+json",
+          "User-Agent": "Audit-Pilot-App"
         },
       });
 
@@ -119,6 +216,7 @@ export async function registerRoutes(
         headers: {
           Authorization: `token ${token}`,
           Accept: "application/vnd.github.v3+json",
+          "User-Agent": "Audit-Pilot-App"
         },
       });
 
@@ -152,44 +250,59 @@ export async function registerRoutes(
       }
 
       if (finalFiles.length === 0) {
+        console.warn(`No suitable files found for analysis in ${owner}/${repo}.`);
         return res.status(400).json({ message: "No suitable files found for analysis in this repository." });
       }
+
+      console.log(`Auditing ${owner}/${repo}: analyzing ${finalFiles.length} files.`);
 
       // 4. Fetch content for found files
       let repoContent = "";
       for (const file of finalFiles) {
-        const fileResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${file.path}`, {
-          headers: {
-            Authorization: `token ${token}`,
-            Accept: "application/vnd.github.v3.raw",
-          },
-        });
+        try {
+          const fileResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${file.path}`, {
+            headers: {
+              Authorization: `token ${token}`,
+              Accept: "application/vnd.github.v3.raw",
+              "User-Agent": "Audit-Pilot-App"
+            },
+          });
 
-        if (fileResponse.ok) {
-          const content = await fileResponse.text();
-          const truncatedContent = content.length > 5000 ? content.substring(0, 5000) + "\n... [truncated]" : content;
-          repoContent += `\n--- File: ${file.path} ---\n${truncatedContent}\n`;
+          if (fileResponse.ok) {
+            const content = await fileResponse.text();
+            const truncatedContent = content.length > 5000 ? content.substring(0, 5000) + "\n... [truncated]" : content;
+            repoContent += `\n--- File: ${file.path} ---\n${truncatedContent}\n`;
+          } else {
+            console.warn(`Failed to fetch file content for ${file.path}: ${fileResponse.statusText}`);
+          }
+        } catch (err: any) {
+          console.error(`Error fetching file ${file.path}:`, err.message);
         }
+      }
+
+      console.log(`Captured ${repoContent.length} characters of repository content.`);
+      if (repoContent.length === 0) {
+        console.warn("Repository content is empty despite finding files.");
       }
 
       // 5. AI Analysis
       let aiResponse;
       try {
         aiResponse = await openai.chat.completions.create({
-          model: "google/gemini-3.1-pro-preview",
+          model: "stepfun/step-3.5-flash:free",
           messages: [
             {
               role: "system",
-              content: "You are an expert security and performance auditor. Analyze the provided repository files and identify real issues. For each issue, provide: type (security, performance, accessibility), severity (critical, medium, low), file path, description, and if a fix is available, provide the old code and the new fixed code. Output valid JSON only with an 'issues' array."
+              content: "You are an expert security and performance auditor. Analyze the provided repository files and identify real issues. For each issue, provide: type (security, performance, accessibility), severity (critical, medium, low), file path, description, and if a fix is available, provide the old code and the new fixed code. Output valid JSON ONLY. Do not include any explanation outside the JSON object. The JSON should have an 'issues' array."
             },
             {
               role: "user",
-              content: `Analyze this repository: ${owner}/${repo}\n\nFiles content:\n${repoContent}`
+              content: `REPOSITORY: ${owner}/${repo}\n\nFILES CONTENT:\n${repoContent}\n\nAnalyze the files above and provide the audit issues in the requested JSON format.`
             }
-          ],
-          response_format: { type: "json_object" }
+          ]
         });
       } catch (aiError: any) {
+        console.error("AI Completion Error:", aiError.message);
         if (aiError.code === 'insufficient_quota') {
           return res.status(429).json({
             message: "OpenAI Quota Exceeded. Please check your billing/credits at platform.openai.com.",
@@ -199,7 +312,7 @@ export async function registerRoutes(
         throw aiError;
       }
 
-      const aiResult = JSON.parse(aiResponse.choices[0].message.content || '{"issues": []}');
+      const aiResult = safeJsonParse(aiResponse.choices[0].message.content || '{"issues": []}') || { "issues": [] };
       const issues = Array.isArray(aiResult.issues) ? aiResult.issues : [];
 
       // 6. Create Audit Record
@@ -229,6 +342,107 @@ export async function registerRoutes(
     } catch (error: any) {
       console.error("Robust AI Audit Error:", error);
       res.status(500).json({ message: error.message || "An unexpected error occurred during the audit process." });
+    }
+  });
+
+  app.post("/api/repos/:owner/:repo/fix", async (req, res) => {
+    const token = (req.session as any).githubAccessToken;
+    if (!token) return res.status(401).json({ message: "Unauthorized" });
+
+    const { owner, repo } = req.params;
+    const { issues, targetBranch } = req.body;
+
+    try {
+      // 1. Get default branch/latest SHA for the base
+      const repoResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${targetBranch}`, {
+        headers: {
+          Authorization: `token ${token}`,
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "Audit-Pilot-App"
+        },
+      });
+      if (!repoResponse.ok) throw new Error(`Target branch ${targetBranch} not found`);
+      const repoRef = await repoResponse.json();
+      const baseSha = repoRef.object.sha;
+
+      // 2. Create a new branch
+      const newBranchName = `auditpilot-fix-${Date.now()}`;
+      const createBranchResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/refs`, {
+        method: "POST",
+        headers: {
+          Authorization: `token ${token}`,
+          "Content-Type": "application/json",
+          "User-Agent": "Audit-Pilot-App"
+        },
+        body: JSON.stringify({ ref: `refs/heads/${newBranchName}`, sha: baseSha }),
+      });
+      if (!createBranchResponse.ok) throw new Error("Failed to create new branch");
+
+      // 3. Update files for each issue
+      for (const issue of issues) {
+        if (!issue.fix || !issue.fix.old_code || !issue.fix.new_code) continue;
+
+        // Fetch current file content
+        const fileResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${issue.file}?ref=${newBranchName}`, {
+          headers: {
+            Authorization: `token ${token}`,
+            Accept: "application/vnd.github.v3+json",
+            "User-Agent": "Audit-Pilot-App"
+          },
+        });
+
+        if (fileResponse.ok) {
+          const fileData = await fileResponse.json();
+          const currentContent = Buffer.from(fileData.content, 'base64').toString('utf-8');
+
+          // Apply fix (simple string replacement for now)
+          const newContent = currentContent.replace(issue.fix.old_code, issue.fix.new_code);
+
+          if (currentContent !== newContent) {
+            await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${issue.file}`, {
+              method: "PUT",
+              headers: {
+                Authorization: `token ${token}`,
+                "Content-Type": "application/json",
+                "User-Agent": "Audit-Pilot-App"
+              },
+              body: JSON.stringify({
+                message: `AuditPilot: Fix issue in ${issue.file}\n\n${issue.description}`,
+                content: Buffer.from(newContent).toString('base64'),
+                sha: fileData.sha,
+                branch: newBranchName,
+              }),
+            });
+          }
+        }
+      }
+
+      // 4. Create Pull Request
+      const prResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls`, {
+        method: "POST",
+        headers: {
+          Authorization: `token ${token}`,
+          "Content-Type": "application/json",
+          "User-Agent": "Audit-Pilot-App"
+        },
+        body: JSON.stringify({
+          title: `AuditPilot: Fix security and performance issues`,
+          body: `This PR applies automated fixes for issues identified during the AI audit.\n\nIssues fixed:\n${issues.map((i: any) => `- ${i.description}`).join('\n')}`,
+          head: newBranchName,
+          base: targetBranch,
+        }),
+      });
+
+      if (!prResponse.ok) {
+        const err = await prResponse.json();
+        throw new Error(`Failed to create PR: ${err.message}`);
+      }
+
+      const prData = await prResponse.json();
+      res.json(prData);
+    } catch (error: any) {
+      console.error("Apply Fix Error:", error);
+      res.status(500).json({ message: error.message });
     }
   });
 
@@ -321,22 +535,21 @@ export async function registerRoutes(
       `;
 
       const response = await openai.chat.completions.create({
-        model: "google/gemini-3.1-pro-preview",
+        model: "stepfun/step-3.5-flash:free",
         messages: [
           {
             role: "system",
-            content: "You are an expert audit compliance assistant. Analyze the following audit data and provide a summary, a risk score (0-100), and detailed insights/recommendations. Output JSON only."
+            content: "You are an expert audit compliance assistant. Analyze the following audit data and provide a summary, a risk score (0-100), and detailed insights/recommendations. Output valid JSON ONLY. Do not include any explanation outside the JSON object."
           },
           {
             role: "user",
             content: auditContext
           }
-        ],
-        response_format: { type: "json_object" }
+        ]
       });
 
       const content = response.choices[0].message.content || "{}";
-      const result = JSON.parse(content);
+      const result = safeJsonParse(content) || {};
 
       const summary = result.summary || "No summary generated.";
       const riskScore = typeof result.riskScore === 'number' ? result.riskScore : 50;
@@ -353,6 +566,164 @@ export async function registerRoutes(
     } catch (error) {
       console.error("AI Generation Error:", error);
       res.status(500).json({ message: "Failed to generate insights" });
+    }
+  });
+
+  // === PR Detail and AI Flow ===
+
+  app.get("/api/repos/:owner/:repo/pulls/:number/files", async (req, res) => {
+    const token = (req.session as any).githubAccessToken;
+    if (!token) return res.status(401).json({ message: "Unauthorized" });
+
+    const { owner, repo, number } = req.params;
+    try {
+      const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${number}/files`, {
+        headers: {
+          Authorization: `token ${token}`,
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "Audit-Pilot-App"
+        },
+      });
+
+      if (!response.ok) throw new Error("Failed to fetch PR files");
+      const files = await response.json();
+      res.json(files);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/repos/:owner/:repo/pulls/:number/audit", async (req, res) => {
+    const token = (req.session as any).githubAccessToken;
+    if (!token) return res.status(401).json({ message: "Unauthorized" });
+
+    const { owner, repo, number } = req.params;
+    try {
+      // 1. Fetch PR files to get diffs
+      const filesResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${number}/files`, {
+        headers: {
+          Authorization: `token ${token}`,
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "Audit-Pilot-App"
+        },
+      });
+      const files = await filesResponse.json();
+
+      // 2. Prepare context for AI (focus on the patches/diffs)
+      const prContext = files.map((f: any) => `File: ${f.filename}\nDiff:\n${f.patch}`).join("\n\n");
+
+      // 3. AI Analysis of the PR
+      const aiResponse = await openai.chat.completions.create({
+        model: "stepfun/step-3.5-flash:free",
+        messages: [
+          {
+            role: "system",
+            content: "You are an expert code reviewer. Analyze the following Pull Request diffs and identify any security vulnerabilities, performance issues, or bugs introduced in these changes. For each issue, provide: type, severity, description, and a fix (old_code and new_code). Output valid JSON ONLY with an 'issues' array."
+          },
+          {
+            role: "user",
+            content: `Review this Pull Request (${owner}/${repo} #${number}):\n\n${prContext}`
+          }
+        ]
+      });
+
+      const result = safeJsonParse(aiResponse.choices[0].message.content || '{"issues": []}') || { "issues": [] };
+      res.json(result);
+    } catch (error: any) {
+      console.error("PR Audit Error:", error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/repos/:owner/:repo/pulls/:number/fix", async (req, res) => {
+    const token = (req.session as any).githubAccessToken;
+    if (!token) return res.status(401).json({ message: "Unauthorized" });
+
+    const { owner, repo, number } = req.params;
+    const { issues } = req.body;
+
+    try {
+      // 1. Get PR details to find head branch
+      const prResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${number}`, {
+        headers: {
+          Authorization: `token ${token}`,
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "Audit-Pilot-App"
+        },
+      });
+      const prData = await prResponse.json();
+      const headBranch = prData.head.ref;
+
+      // 2. Apply fixes to the head branch
+      for (const issue of issues) {
+        if (!issue.fix) continue;
+
+        const fileResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${issue.file}?ref=${headBranch}`, {
+          headers: {
+            Authorization: `token ${token}`,
+            Accept: "application/vnd.github.v3+json",
+            "User-Agent": "Audit-Pilot-App"
+          },
+        });
+
+        if (fileResponse.ok) {
+          const fileData = await fileResponse.json();
+          const currentContent = Buffer.from(fileData.content, 'base64').toString('utf-8');
+          const newContent = currentContent.replace(issue.fix.old_code, issue.fix.new_code);
+
+          if (currentContent !== newContent) {
+            await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${issue.file}`, {
+              method: "PUT",
+              headers: {
+                Authorization: `token ${token}`,
+                "Content-Type": "application/json",
+                "User-Agent": "Audit-Pilot-App"
+              },
+              body: JSON.stringify({
+                message: `AuditPilot: Correcting PR #${number} - ${issue.description}`,
+                content: Buffer.from(newContent).toString('base64'),
+                sha: fileData.sha,
+                branch: headBranch,
+              }),
+            });
+          }
+        }
+      }
+
+      res.json({ message: "PR corrected successfully" });
+    } catch (error: any) {
+      console.error("PR Fix Error:", error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/repos/:owner/:repo/pulls/:number/merge", async (req, res) => {
+    const token = (req.session as any).githubAccessToken;
+    if (!token) return res.status(401).json({ message: "Unauthorized" });
+
+    const { owner, repo, number } = req.params;
+    try {
+      const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${number}/merge`, {
+        method: "PUT",
+        headers: {
+          Authorization: `token ${token}`,
+          "Content-Type": "application/json",
+          "User-Agent": "Audit-Pilot-App"
+        },
+        body: JSON.stringify({
+          commit_title: `AuditPilot: Merging PR #${number}`,
+          merge_method: "squash"
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.message || "Failed to merge PR");
+      }
+
+      res.json({ message: "PR merged successfully" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 

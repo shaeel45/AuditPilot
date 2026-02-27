@@ -33,6 +33,7 @@ export function useAuthStatus() {
         queryFn: async () => {
             const res = await fetch("/api/auth/user");
             if (!res.ok) return { authenticated: false };
+            localStorage.setItem("authenticated", "true");
             return await res.json();
         },
     });
