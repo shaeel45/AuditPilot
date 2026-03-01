@@ -8,6 +8,10 @@ import type { Request, Response, NextFunction } from "express";
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+  defaultHeaders: {
+    "HTTP-Referer": "https://auditspilot.netlify.app",
+    "X-Title": "AuditsPilot"
+  }
 });
 
 export async function registerRoutes(
