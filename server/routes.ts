@@ -251,7 +251,6 @@ export async function registerRoutes(
 
   app.get("/api/repos/:owner/:repo/branches", requireAuth, async (req, res) => {
     const token = (req as any).githubAccessToken;
-    if (!token) return res.status(401).json({ message: "Unauthorized" });
 
     const { owner, repo } = req.params;
     try {
@@ -273,9 +272,6 @@ export async function registerRoutes(
 
   app.post("/api/repos/:owner/:repo/audit", requireAuth, async (req, res) => {
     const token = (req as any).githubAccessToken;
-    if (!token) {
-      return res.status(401).json({ message: "Authentication required. Please log in again." });
-    }
 
     const { owner, repo } = req.params;
     const user = (req as any).user;
@@ -473,7 +469,6 @@ export async function registerRoutes(
 
   app.post("/api/repos/:owner/:repo/fix", requireAuth, async (req, res) => {
     const token = (req as any).githubAccessToken;
-    if (!token) return res.status(401).json({ message: "Unauthorized" });
 
     const { owner, repo } = req.params;
     const { issues, targetBranch } = req.body;
@@ -636,12 +631,12 @@ export async function registerRoutes(
 
   // === Audit Routes ===
 
-  app.get("/api/audits", async (_req, res) => {
+  app.get("/api/audits", requireAuth, async (_req, res) => {
     const audits = await storage.getAudits();
     res.json(audits);
   });
 
-  app.get("/api/audits/:id", async (req, res) => {
+  app.get("/api/audits/:id", requireAuth, async (req, res) => {
     const audit = await storage.getAudit(req.params.id);
     if (!audit) {
       return res.status(404).json({ message: "Audit not found" });
@@ -649,7 +644,7 @@ export async function registerRoutes(
     res.json(audit);
   });
 
-  app.post("/api/audits", async (req, res) => {
+  app.post("/api/audits", requireAuth, async (req, res) => {
     try {
       const audit = await storage.createAudit(req.body);
       res.status(201).json(audit);
@@ -658,7 +653,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/audits/:id", async (req, res) => {
+  app.patch("/api/audits/:id", requireAuth, async (req, res) => {
     try {
       const audit = await storage.updateAudit(req.params.id, req.body);
       if (!audit) {
@@ -670,14 +665,14 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/audits/:id", async (req, res) => {
+  app.delete("/api/audits/:id", requireAuth, async (req, res) => {
     await storage.deleteAudit(req.params.id);
     res.status(204).send();
   });
 
   // === Audit Item Routes ===
 
-  app.post("/api/audits/:auditId/items", async (req, res) => {
+  app.post("/api/audits/:auditId/items", requireAuth, async (req, res) => {
     try {
       const item = await storage.createAuditItem({ ...req.body, auditId: req.params.auditId });
       res.status(201).json(item);
@@ -686,7 +681,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/audit-items/:id", async (req, res) => {
+  app.patch("/api/audit-items/:id", requireAuth, async (req, res) => {
     try {
       const item = await storage.updateAuditItem(req.params.id, req.body);
       if (!item) {
@@ -698,14 +693,14 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/audit-items/:id", async (req, res) => {
+  app.delete("/api/audit-items/:id", requireAuth, async (req, res) => {
     await storage.deleteAuditItem(req.params.id);
     res.status(204).send();
   });
 
   // === AI Insights Route ===
 
-  app.post("/api/audits/:id/generate-insights", async (req, res) => {
+  app.post("/api/audits/:id/generate-insights", requireAuth, async (req, res) => {
     try {
       const auditId = req.params.id;
       const audit = await storage.getAudit(auditId);
@@ -759,9 +754,8 @@ export async function registerRoutes(
 
   // === PR Detail and AI Flow ===
 
-  app.get("/api/repos/:owner/:repo/pulls/:number/files", async (req, res) => {
+  app.get("/api/repos/:owner/:repo/pulls/:number/files", requireAuth, async (req, res) => {
     const token = (req as any).githubAccessToken;
-    if (!token) return res.status(401).json({ message: "Unauthorized" });
 
     const { owner, repo, number } = req.params;
     try {
@@ -781,9 +775,8 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/repos/:owner/:repo/pulls/:number/audit", async (req, res) => {
+  app.post("/api/repos/:owner/:repo/pulls/:number/audit", requireAuth, async (req, res) => {
     const token = (req as any).githubAccessToken;
-    if (!token) return res.status(401).json({ message: "Unauthorized" });
 
     const { owner, repo, number } = req.params;
     const user = (req as any).user;
@@ -839,9 +832,8 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/repos/:owner/:repo/pulls/:number/fix", async (req, res) => {
+  app.post("/api/repos/:owner/:repo/pulls/:number/fix", requireAuth, async (req, res) => {
     const token = (req as any).githubAccessToken;
-    if (!token) return res.status(401).json({ message: "Unauthorized" });
 
     const { owner, repo, number } = req.params;
     const { issues } = req.body;
@@ -903,7 +895,6 @@ export async function registerRoutes(
 
   app.post("/api/repos/:owner/:repo/pulls/:number/merge", requireAuth, async (req, res) => {
     const token = (req as any).githubAccessToken;
-    if (!token) return res.status(401).json({ message: "Unauthorized" });
 
     const { owner, repo, number } = req.params;
     const user = (req as any).user;
