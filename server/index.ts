@@ -30,7 +30,7 @@ app.use(express.urlencoded({ extended: false }));
 app.use(
   session({
     cookie: { maxAge: 604800000 }, // 7 days in milliseconds
-    store: MongoStore.create({
+    store: ((MongoStore as any).default || MongoStore).create({
       mongoUrl: MONGODB_URI,
       ttl: 7 * 24 * 60 * 60, // 7 days
     }),
