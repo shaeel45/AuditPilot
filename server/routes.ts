@@ -9,10 +9,14 @@ const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
   defaultHeaders: {
+    "Authorization": `Bearer ${process.env.AI_INTEGRATIONS_OPENAI_API_KEY}`,
     "HTTP-Referer": "https://auditspilot.netlify.app",
     "X-Title": "AuditsPilot"
   }
 });
+
+console.log("OPENROUTER KEY PREFIX:", process.env.AI_INTEGRATIONS_OPENAI_API_KEY?.slice(0, 10));
+console.log("BASE URL:", process.env.AI_INTEGRATIONS_OPENAI_BASE_URL);
 
 export async function registerRoutes(
   httpServer: Server,
