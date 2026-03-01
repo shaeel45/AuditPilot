@@ -7,15 +7,16 @@ import type { Request, Response, NextFunction } from "express";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+  baseURL: (process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/$/, ""),
   defaultHeaders: {
     "HTTP-Referer": "https://auditspilot.netlify.app",
     "X-Title": "AuditsPilot"
   }
 });
 
-console.log("AI Config: API Key present?", !!process.env.AI_INTEGRATIONS_OPENAI_API_KEY);
-console.log("AI Config: Base URL:", process.env.AI_INTEGRATIONS_OPENAI_BASE_URL);
+console.log(`[AI Config] Model: Gemini 2.0 Flash`);
+console.log(`[AI Config] API Key present: ${!!process.env.AI_INTEGRATIONS_OPENAI_API_KEY}`);
+console.log(`[AI Config] Base URL: ${process.env.AI_INTEGRATIONS_OPENAI_BASE_URL}`);
 
 export async function registerRoutes(
   httpServer: Server,
