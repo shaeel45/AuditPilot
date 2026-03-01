@@ -383,7 +383,7 @@ export async function registerRoutes(
       let aiResponse;
       try {
         aiResponse = await openai.chat.completions.create({
-          model: "google/gemini-2.0-flash-exp:free",
+          model: "nvidia/nemotron-3-nano-30b-a3b:free",
           messages: [
             {
               role: "system",
@@ -723,7 +723,7 @@ export async function registerRoutes(
       `;
 
       const response = await openai.chat.completions.create({
-        model: "google/gemini-2.0-flash-exp:free",
+        model: "nvidia/nemotron-3-nano-30b-a3b:free",
         messages: [
           {
             role: "system",
@@ -812,7 +812,7 @@ export async function registerRoutes(
 
       // 3. AI Analysis of the PR
       const aiResponse = await openai.chat.completions.create({
-        model: "google/gemini-2.0-flash-exp:free",
+        model: "nvidia/nemotron-3-nano-30b-a3b:free",
         messages: [
           {
             role: "system",
