@@ -50,6 +50,17 @@ export default function Dashboard() {
     }
   }, [authStatus, isLoadingAuth, setLocation]);
 
+  const handleLogout = async () => {
+    try {
+      const res = await fetch("/api/auth/logout");
+      if (res.ok) {
+        window.location.href = "/";
+      }
+    } catch (err) {
+      console.error("Logout failed:", err);
+    }
+  };
+
   // Navigation handling
   const goToStep = (s: Step) => setStep(s);
 
@@ -71,6 +82,14 @@ export default function Dashboard() {
           <div className="mt-8 px-3 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wider">Account</div>
           <NavItem active={step === 'billing'} icon={<Zap className="w-4 h-4" />} label="Billing" onClick={() => goToStep('billing')} />
           <NavItem active={step === 'settings'} icon={<Eye className="w-4 h-4" />} label="Settings" onClick={() => goToStep('settings')} />
+
+          {authStatus?.user?.plan === 'starter' && (
+            <div className="mt-8 p-3 bg-indigo-50/50 rounded-xl border border-indigo-100 mx-3">
+              <div className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider mb-2">Plan: Starter</div>
+              <UsageCounter label="Audits" used={authStatus.user.auditsUsed} limit={3} />
+              <UsageCounter label="PR Actions" used={authStatus.user.pullRequestsUsed} limit={5} className="mt-3" />
+            </div>
+          )}
         </div>
 
         <div className="mt-auto p-4 border-t border-slate-100">
@@ -84,6 +103,15 @@ export default function Dashboard() {
               <div className="text-sm font-medium text-slate-900">{authStatus?.user?.displayName || "Loading..."}</div>
               <div className="text-xs text-slate-500">{authStatus?.user?.username || "Fetching..."}</div>
             </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="ml-auto text-slate-400 hover:text-red-500"
+              onClick={handleLogout}
+              title="Log Out"
+            >
+              <ArrowLeft className="w-4 h-4 rotate-180" />
+            </Button>
           </div>
         </div>
       </aside>
@@ -119,7 +147,13 @@ export default function Dashboard() {
                 key="repos"
                 repos={repos || []}
                 isLoading={isLoadingRepos}
+                authStatus={authStatus}
                 onSelect={(repo) => {
+                  const isLimitReached = (authStatus?.user?.auditsUsed || 0) >= 3;
+                  if (isLimitReached) {
+                    alert("Audit limit reached for Starter plan. Please upgrade to Pro for more audits.");
+                    return;
+                  }
                   setSelectedRepo(repo);
                   goToStep('audit');
                   auditMutation.mutate({ owner: repo.owner.login, repo: repo.name }, {
@@ -152,6 +186,7 @@ export default function Dashboard() {
               <PullDetailView
                 pr={selectedPR}
                 onBack={() => setStep('pulls')}
+                authStatus={authStatus}
                 onReviewComplete={(issues) => {
                   setPrIssues(issues);
                   setStep('pull_results');
@@ -164,12 +199,14 @@ export default function Dashboard() {
                 onBack={() => setStep('pull_detail')}
                 onFixComplete={() => setStep('pull_diff')}
                 pr={selectedPR}
+                authStatus={authStatus}
               />
             )}
             {step === 'pull_diff' && (
               <PRDiffView
                 pr={selectedPR}
                 onBack={() => setStep('pull_results')}
+                authStatus={authStatus}
               />
             )}
             {step === 'billing' && <BillingView key="billing" />}
@@ -196,7 +233,7 @@ function NavItem({ active, icon, label, onClick }: { active: boolean, icon: any,
 // ------------------------------------------------------------------
 // STEP 1: REPO SELECTION
 // ------------------------------------------------------------------
-function RepoSelection({ repos, isLoading, onSelect }: { repos: any[], isLoading: boolean, onSelect: (repo: any) => void }) {
+function RepoSelection({ repos, isLoading, authStatus, onSelect }: { repos: any[], isLoading: boolean, authStatus: any, onSelect: (repo: any) => void }) {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -239,7 +276,12 @@ function RepoSelection({ repos, isLoading, onSelect }: { repos: any[], isLoading
               </div>
               <div className="mt-4 flex items-center justify-between">
                 <div className="text-xs text-slate-400">{repo.default_branch} branch</div>
-                <Button size="sm" variant="ghost" className="text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 -mr-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className={`${(authStatus?.user?.auditsUsed || 0) >= 3 ? 'text-slate-400' : 'text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50'} -mr-2`}
+                  disabled={(authStatus?.user?.auditsUsed || 0) >= 3}
+                >
                   Run Audit <ArrowRight className="w-4 h-4 ml-1" />
                 </Button>
               </div>
@@ -340,6 +382,7 @@ function AuditProgress({ onComplete, isComplete }: { onComplete: () => void, isC
 // STEP 3: AUDIT RESULTS
 // ------------------------------------------------------------------
 function AuditResults({ issues, onFix }: { issues: Issue[], onFix: () => void }) {
+  const [expandedIssueId, setExpandedIssueId] = useState<string | null>(null);
   const securityCount = issues.filter(i => i.type === 'security').length;
   const performanceCount = issues.filter(i => i.type === 'performance').length;
   const accessibilityCount = issues.filter(i => i.type === 'accessibility').length;
@@ -383,34 +426,73 @@ function AuditResults({ issues, onFix }: { issues: Issue[], onFix: () => void })
         </div>
         <div className="divide-y divide-slate-100">
           {issues.map((issue, idx) => {
-            const hasFix = issue.fix_available || (issue.fix && issue.fix.new_code);
+            const issueId = issue.id || issue.dbId || `issue-${idx}`;
+            const isExpanded = expandedIssueId === issueId;
+            const hasFix = !!(issue.fix_available || issue.fix || (issue as any).oldCode);
             const fileName = issue.file_path || issue.file;
+            const oldCode = issue.fix?.old_code || issue.old_code || issue.oldCode;
+            const newCode = issue.fix?.new_code || issue.new_code || issue.newCode;
+
             return (
-              <div key={issue.id || issue.dbId || `issue-${idx}`} className="p-6 hover:bg-slate-50 transition-colors flex items-start gap-4 group">
-                <div className={`mt-1 w-2 h-2 rounded-full ${issue.severity === 'critical' ? 'bg-red-500' : issue.severity === 'medium' ? 'bg-amber-500' : 'bg-slate-400'}`}></div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="font-medium text-slate-900">{issue.description}</span>
-                    {hasFix && (
-                      <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-100 text-[10px] px-2 h-5">Auto-fix</Badge>
-                    )}
+              <div key={issueId} className="flex flex-col group">
+                <div className="p-6 hover:bg-slate-50 transition-colors flex items-start gap-4">
+                  <div className={`mt-1 w-2 h-2 rounded-full ${issue.severity === 'critical' ? 'bg-red-500' : issue.severity === 'medium' ? 'bg-amber-500' : 'bg-slate-400'}`}></div>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-medium text-slate-900">{issue.description}</span>
+                      {hasFix && (
+                        <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-100 text-[10px] px-2 h-5">Auto-fix</Badge>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-4 text-xs text-slate-500 font-mono">
+                      <span>{fileName}</span>
+                      <span className="w-1 h-1 bg-slate-300 rounded-full"></span>
+                      <span className="uppercase">{issue.type}</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-4 text-xs text-slate-500 font-mono">
-                    <span>{fileName}</span>
-                    <span className="w-1 h-1 bg-slate-300 rounded-full"></span>
-                    <span className="uppercase">{issue.type}</span>
-                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={!hasFix}
+                    onClick={() => setExpandedIssueId(isExpanded ? null : issueId)}
+                    className={`${hasFix ? (isExpanded ? 'bg-indigo-50 text-indigo-700' : 'text-indigo-600 hover:bg-indigo-50') : 'text-slate-300'}`}
+                  >
+                    {hasFix ? (isExpanded ? 'Hide Fix' : 'View Fix') : 'Manual Fix'}
+                  </Button>
                 </div>
-                <Button size="sm" variant="ghost" disabled={!hasFix} className={`${hasFix ? 'text-indigo-600 hover:bg-indigo-50' : 'text-slate-300'}`}>
-                  {hasFix ? 'View Fix' : 'Manual Fix'}
-                </Button>
+
+                <AnimatePresence>
+                  {isExpanded && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="overflow-hidden border-t border-slate-100 bg-slate-50/30"
+                    >
+                      <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4 font-mono text-[11px]">
+                        <div className="space-y-2">
+                          <div className="text-[10px] font-bold text-red-600 uppercase tracking-wider">Original Code</div>
+                          <div className="p-3 bg-red-50/50 rounded-lg border border-red-100/50 text-red-700 overflow-x-auto whitespace-pre">
+                            {oldCode || '// Original code not provided'}
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="text-[10px] font-bold text-green-600 uppercase tracking-wider">Proposed Fix</div>
+                          <div className="p-3 bg-green-50/50 rounded-lg border border-green-100/50 text-green-700 overflow-x-auto whitespace-pre">
+                            {newCode || '// Fix not provided'}
+                          </div>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             );
           })}
         </div>
         <div className="p-6 bg-slate-50/50 border-t border-slate-100 flex justify-end">
           <Button onClick={onFix} size="lg" className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-600/20">
-            Fix All Issues ({issues.filter(i => i.fix_available || i.fix).length}) <ArrowRight className="ml-2 w-4 h-4" />
+            Apply All Fixes ({issues.filter(i => !!(i.fix_available || i.fix || (i as any).oldCode)).length}) <ArrowRight className="ml-2 w-4 h-4" />
           </Button>
         </div>
       </div>
@@ -457,8 +539,9 @@ function AutoFixConfirmation({ issues, onConfirm, onBack, onReviewDiff }: { issu
         <div className="divide-y divide-slate-100">
           {issues.map((issue, idx) => {
             const fileName = issue.file_path || issue.file;
+            const issueId = issue.id || issue.dbId || `conf-${idx}`;
             return (
-              <div key={issue.id || issue.dbId || `fix-${idx}`} className="p-4 flex items-center gap-4">
+              <div key={issueId} className="p-4 flex items-center gap-4">
                 <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
                 <div className="flex-1">
                   <div className="text-sm font-medium text-slate-900">{issue.description}</div>
@@ -800,8 +883,8 @@ function PullsView({ onSelect }: { onSelect: (pr: any) => void }) {
 // ------------------------------------------------------------------
 // STEP 8: PR DETAIL VIEW
 // ------------------------------------------------------------------
-function PullDetailView({ pr, onBack, onReviewComplete }: { pr: any, onBack: () => void, onReviewComplete: (issues: any[]) => void }) {
-  const repoOwner = pr.repo?.owner || pr.owner?.login || pr.owner;
+function PullDetailView({ pr, onBack, onReviewComplete, authStatus }: { pr: any, onBack: () => void, onReviewComplete: (issues: any[]) => void, authStatus: any }) {
+  const repoOwner = pr.repo?.owner?.login || pr.repo?.owner || pr.owner?.login || pr.owner;
   const repoName = pr.repo?.name || pr.name;
 
   const { data: files, isLoading: isLoadingFiles } = usePRFiles(repoOwner, repoName, pr.number);
@@ -812,6 +895,10 @@ function PullDetailView({ pr, onBack, onReviewComplete }: { pr: any, onBack: () 
   const [targetBranch, setTargetBranch] = useState(pr.base?.ref || 'master');
 
   const handleAudit = () => {
+    if (authStatus?.user?.pullRequestsUsed >= 5) {
+      alert("PR action limit reached. Please upgrade to Pro.");
+      return;
+    }
     auditMutation.mutate({ owner: repoOwner, repo: repoName, number: pr.number }, {
       onSuccess: (data) => {
         onReviewComplete(data.issues || []);
@@ -820,6 +907,10 @@ function PullDetailView({ pr, onBack, onReviewComplete }: { pr: any, onBack: () 
   };
 
   const handleMerge = () => {
+    if (authStatus?.user?.pullRequestsUsed >= 5) {
+      alert("PR action limit reached. Please upgrade to Pro.");
+      return;
+    }
     mergeMutation.mutate({ owner: repoOwner, repo: repoName, number: pr.number }, {
       onSuccess: () => onBack()
     });
@@ -897,11 +988,11 @@ function PullDetailView({ pr, onBack, onReviewComplete }: { pr: any, onBack: () 
             <CardContent>
               <Button
                 onClick={handleAudit}
-                disabled={auditMutation.isPending}
+                disabled={auditMutation.isPending || authStatus?.user?.pullRequestsUsed >= 5}
                 className="w-full bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-200"
               >
                 {auditMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Zap className="w-4 h-4 mr-2" />}
-                Review with AI
+                {authStatus?.user?.pullRequestsUsed >= 5 ? "Limit Reached" : "Review with AI"}
               </Button>
             </CardContent>
           </Card>
@@ -927,11 +1018,11 @@ function PullDetailView({ pr, onBack, onReviewComplete }: { pr: any, onBack: () 
               <div className="pt-2 space-y-3">
                 <Button
                   onClick={handleMerge}
-                  disabled={mergeMutation.isPending || updatePRMutation.isPending}
+                  disabled={mergeMutation.isPending || updatePRMutation.isPending || authStatus?.user?.pullRequestsUsed >= 5}
                   className="w-full bg-[#2da44e] hover:bg-[#2c974b] text-white"
                 >
                   <GitPullRequest className="w-4 h-4 mr-2" />
-                  Merge into {targetBranch}
+                  {authStatus?.user?.pullRequestsUsed >= 5 ? "Limit Reached" : `Merge into ${targetBranch}`}
                 </Button>
                 <Button variant="outline" className="w-full border-slate-200 text-slate-600" asChild>
                   <a href={pr.html_url} target="_blank" rel="noopener noreferrer">
@@ -950,11 +1041,13 @@ function PullDetailView({ pr, onBack, onReviewComplete }: { pr: any, onBack: () 
 // ------------------------------------------------------------------
 // STEP 9: PR AUDIT RESULTS
 // ------------------------------------------------------------------
-function PRAuditResultsView({ issues, onBack, onFixComplete, pr }: { issues: any[], onBack: () => void, onFixComplete: () => void, pr: any }) {
+function PRAuditResultsView({ issues, onBack, onFixComplete, pr, authStatus }: { issues: any[], onBack: () => void, onFixComplete: () => void, pr: any, authStatus: any }) {
   const fixMutation = usePRFix();
 
   const handleFix = () => {
-    fixMutation.mutate({ owner: pr.repo.owner, repo: pr.repo.name, number: pr.number, issues }, {
+    const owner = pr.repo?.owner?.login || pr.repo?.owner || pr.owner?.login || pr.owner;
+    const repo = pr.repo?.name || pr.name;
+    fixMutation.mutate({ owner, repo, number: pr.number, issues }, {
       onSuccess: () => onFixComplete()
     });
   };
@@ -1021,15 +1114,17 @@ function PRAuditResultsView({ issues, onBack, onFixComplete, pr }: { issues: any
 // ------------------------------------------------------------------
 // STEP 10: PR DIFF VIEW (DARK THEME)
 // ------------------------------------------------------------------
-function PRDiffView({ pr, onBack }: { pr: any, onBack: () => void }) {
-  const { data: files, isLoading } = usePRFiles(pr.repo.owner, pr.repo.name, pr.number);
-  const { data: branches } = useBranches(pr.repo.owner, pr.repo.name);
+function PRDiffView({ pr, onBack, authStatus }: { pr: any, onBack: () => void, authStatus: any }) {
+  const owner = pr.repo?.owner?.login || pr.repo?.owner || pr.owner?.login || pr.owner;
+  const repo = pr.repo?.name || pr.name;
+  const { data: files, isLoading } = usePRFiles(owner, repo, pr.number);
+  const { data: branches } = useBranches(owner, repo);
   const mergeMutation = usePRMerge();
   const updatePRMutation = useUpdatePR();
-  const [targetBranch, setTargetBranch] = useState(pr.base.ref);
+  const [targetBranch, setTargetBranch] = useState(pr.base?.ref || 'master');
 
   const handleMerge = () => {
-    mergeMutation.mutate({ owner: pr.repo.owner, repo: pr.repo.name, number: pr.number }, {
+    mergeMutation.mutate({ owner, repo, number: pr.number }, {
       onSuccess: () => onBack()
     });
   };
@@ -1037,8 +1132,8 @@ function PRDiffView({ pr, onBack }: { pr: any, onBack: () => void }) {
   const handleBranchChange = (newBranch: string) => {
     setTargetBranch(newBranch);
     updatePRMutation.mutate({
-      owner: pr.repo.owner,
-      repo: pr.repo.name,
+      owner,
+      repo,
       number: pr.number,
       data: { base: newBranch }
     });
@@ -1287,6 +1382,24 @@ function SettingsView({ user }: { user: any }) {
         </div>
       </div>
     </motion.div>
+  );
+}
+
+function UsageCounter({ label, used, limit, className = "" }: { label: string, used: number, limit: number, className?: string }) {
+  const percent = Math.min(100, (used / limit) * 100);
+  return (
+    <div className={className}>
+      <div className="flex justify-between text-[10px] mb-1">
+        <span className="text-slate-500 font-medium">{label}</span>
+        <span className="text-slate-700 font-bold">{used}/{limit}</span>
+      </div>
+      <div className="h-1 w-full bg-slate-200 rounded-full overflow-hidden">
+        <div
+          className={`h-full transition-all duration-500 ${percent > 80 ? 'bg-amber-500' : 'bg-indigo-500'}`}
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+    </div>
   );
 }
 

@@ -39,6 +39,19 @@ export async function registerRoutes(
     if (!token) {
       return res.status(401).json({ message: "Unauthorized: No GitHub session found" });
     }
+
+    const userId = (req.session as any).userId;
+    if (userId) {
+      try {
+        const user = await User.findById(userId);
+        if (user) {
+          (req as any).user = user;
+        }
+      } catch (err) {
+        console.error("Error fetching user in middleware:", err);
+      }
+    }
+
     next();
   }
 
@@ -97,6 +110,11 @@ export async function registerRoutes(
             email: profile.email,
             accessToken: token, // Optional: keep for background tasks
             lastLogin: new Date(),
+            $setOnInsert: {
+              plan: 'starter',
+              auditsUsed: 0,
+              pullRequestsUsed: 0
+            }
           },
           { upsert: true, new: true }
         );
@@ -110,6 +128,16 @@ export async function registerRoutes(
       console.error("GitHub Auth Error:", error);
       res.status(500).json({ message: "Internal server error during auth" });
     }
+  });
+
+  app.get("/api/auth/logout", (req, res) => {
+    req.session.destroy((err) => {
+      if (err) {
+        return res.status(500).json({ message: "Failed to log out" });
+      }
+      res.clearCookie("connect.sid");
+      res.json({ message: "Logged out successfully" });
+    });
   });
 
   app.get("/api/auth/user", async (req, res) => {
@@ -239,6 +267,15 @@ export async function registerRoutes(
     }
 
     const { owner, repo } = req.params;
+    const user = (req as any).user;
+
+    // Plan Enforcement: Starter limit 3 audits
+    if (user && user.plan === 'starter' && user.auditsUsed >= 3) {
+      return res.status(402).json({
+        message: "Audit limit reached for Starter plan.",
+        details: "You have used all 3 audits included in your plan. Upgrade for unlimited scans."
+      });
+    }
 
     try {
       // 1. Get the latest commit SHA to use the Trees API
@@ -282,7 +319,7 @@ export async function registerRoutes(
         const isConfig = configFiles.some(cfg => path.endsWith(cfg));
         const isSource = sourceExtensions.some(ext => path.endsWith(ext)) && !path.includes('node_modules') && !path.includes('dist') && !path.includes('build') && !path.includes('.git');
         return isConfig || isSource;
-      }).slice(0, 15);
+      }).slice(0, 8);
 
       // If no prioritized files found, fallback to any text files
       let finalFiles = prioritizedFiles;
@@ -316,7 +353,7 @@ export async function registerRoutes(
 
           if (fileResponse.ok) {
             const content = await fileResponse.text();
-            const truncatedContent = content.length > 5000 ? content.substring(0, 5000) + "\n... [truncated]" : content;
+            const truncatedContent = content.length > 3000 ? content.substring(0, 3000) + "\n... [truncated]" : content;
             repoContent += `\n--- File: ${file.path} ---\n${truncatedContent}\n`;
           } else {
             console.warn(`Failed to fetch file content for ${file.path}: ${fileResponse.statusText}`);
@@ -335,7 +372,7 @@ export async function registerRoutes(
       let aiResponse;
       try {
         aiResponse = await openai.chat.completions.create({
-          model: "stepfun/step-3.5-flash:free",
+          model: "nvidia/nemotron-3-nano-30b-a3b:free",
           messages: [
             {
               role: "system",
@@ -359,7 +396,25 @@ export async function registerRoutes(
       }
 
       const aiResult = safeJsonParse(aiResponse.choices[0].message.content || '{"issues": []}') || { "issues": [] };
-      const issues = Array.isArray(aiResult.issues) ? aiResult.issues : [];
+      const rawIssues = Array.isArray(aiResult.issues) ? aiResult.issues : [];
+
+      // Normalize issues: Ensure fix object exists and has old_code/new_code
+      const issues = rawIssues.map((issue: any) => {
+        const normalizedIssue = { ...issue };
+        // Handle cases where old_code/new_code are at top level
+        const oldCode = issue.old_code || issue.oldCode || (issue.fix?.old_code) || (issue.fix?.oldCode);
+        const newCode = issue.new_code || issue.newCode || (issue.fix?.new_code) || (issue.fix?.newCode);
+        const filePath = issue.file_path || issue.file || issue.path;
+
+        if (oldCode && newCode) {
+          normalizedIssue.fix = {
+            old_code: oldCode,
+            new_code: newCode
+          };
+        }
+        normalizedIssue.file = filePath;
+        return normalizedIssue;
+      });
 
       // 6. Create Audit Record
       const audit = await storage.createAudit({
@@ -382,6 +437,11 @@ export async function registerRoutes(
           auditorNotes: `Severity: ${issue.severity}. Recommendation: ${issue.newCode ? 'Apply suggested fix' : 'Manual review required'}`
         });
         savedItems.push({ ...issue, dbId: item._id });
+      }
+
+      // 8. Update usage
+      if (user && user.plan === 'starter') {
+        await User.findByIdAndUpdate(user._id, { $inc: { auditsUsed: 1 } });
       }
 
       res.json({ audit, issues: savedItems });
@@ -425,11 +485,20 @@ export async function registerRoutes(
       if (!createBranchResponse.ok) throw new Error("Failed to create new branch");
 
       // 3. Update files for each issue
+      let modifiedFilesCount = 0;
       for (const issue of issues) {
-        if (!issue.fix || !issue.fix.old_code || !issue.fix.new_code) continue;
+        // Normalize issue data for the fix
+        const oldCode = issue.fix?.old_code || issue.old_code || issue.oldCode;
+        const newCode = issue.fix?.new_code || issue.new_code || issue.newCode;
+        const filePath = issue.file || issue.file_path || issue.path;
+
+        if (!oldCode || !newCode || !filePath) {
+          console.warn("Skipping issue fix due to missing data:", { filePath, hasOld: !!oldCode, hasNew: !!newCode });
+          continue;
+        }
 
         // Fetch current file content
-        const fileResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${issue.file}?ref=${newBranchName}`, {
+        const fileResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filePath}?ref=${newBranchName}`, {
           headers: {
             Authorization: `token ${token}`,
             Accept: "application/vnd.github.v3+json",
@@ -441,11 +510,29 @@ export async function registerRoutes(
           const fileData = await fileResponse.json();
           const currentContent = Buffer.from(fileData.content, 'base64').toString('utf-8');
 
-          // Apply fix (simple string replacement for now)
-          const newContent = currentContent.replace(issue.fix.old_code, issue.fix.new_code);
+          // Apply fix (robust replacement)
+          let newContent = currentContent;
+          if (currentContent.includes(oldCode)) {
+            newContent = currentContent.replace(oldCode, newCode);
+          } else {
+            // Internal normalization for matching: trim and unify newlines
+            const normalize = (s: string) => s.replace(/\r\n/g, '\n').trim();
+            const normalizedContent = normalize(currentContent);
+            const normalizedOld = normalize(oldCode);
+
+            if (normalizedContent.includes(normalizedOld)) {
+              // If we found a match after normalization, we need to find where it is in the original
+              // This is complex, so let's try a split/join on the normalized versions
+              // A simpler approach for now: replace if the normalized versions match exactly
+              // or just use regex with whitespace flexibility
+              const escapedOld = oldCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+              const regex = new RegExp(escapedOld, 'g');
+              newContent = currentContent.replace(regex, newCode);
+            }
+          }
 
           if (currentContent !== newContent) {
-            await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${issue.file}`, {
+            const updateResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`, {
               method: "PUT",
               headers: {
                 Authorization: `token ${token}`,
@@ -453,14 +540,33 @@ export async function registerRoutes(
                 "User-Agent": "Audit-Pilot-App"
               },
               body: JSON.stringify({
-                message: `AuditPilot: Fix issue in ${issue.file}\n\n${issue.description}`,
+                message: `AuditPilot: Fix issue in ${filePath}\n\n${issue.description}`,
                 content: Buffer.from(newContent).toString('base64'),
                 sha: fileData.sha,
                 branch: newBranchName,
               }),
             });
+
+            if (updateResponse.ok) {
+              modifiedFilesCount++;
+            } else {
+              const err = await updateResponse.json();
+              console.error(`Failed to update file ${filePath}:`, err);
+            }
+          } else {
+            console.warn(`Content mismatch or already fixed for ${filePath}. Replace not applied.`, {
+              oldCodeLength: oldCode.length,
+              currentMatch: currentContent.includes(oldCode)
+            });
           }
+        } else {
+          console.error(`Failed to fetch file ${filePath} from branch ${newBranchName}`);
         }
+      }
+
+      // Check if any files were actually modified
+      if (modifiedFilesCount === 0) {
+        throw new Error("No changes were applied. The AI-suggested code snippets did not match the current file contents exactly. This usually happens due to whitespace or version differences.");
       }
 
       // 4. Create Pull Request
@@ -490,7 +596,14 @@ export async function registerRoutes(
             base: targetBranch,
           }
         });
-        throw new Error(`Failed to create PR: ${err.message || JSON.stringify(err)}`);
+
+        let errorMessage = `Failed to create PR: ${err.message || 'Unknown GitHub Error'}`;
+        if (err.errors) {
+          const details = err.errors.map((e: any) => e.message || e.code).join(', ');
+          errorMessage += ` (${details})`;
+        }
+
+        throw new Error(errorMessage);
       }
 
       const prData = await prResponse.json();
@@ -653,6 +766,16 @@ export async function registerRoutes(
     if (!token) return res.status(401).json({ message: "Unauthorized" });
 
     const { owner, repo, number } = req.params;
+    const user = (req as any).user;
+
+    // Plan Enforcement: Starter limit 5 PR actions
+    if (user && user.plan === 'starter' && user.pullRequestsUsed >= 5) {
+      return res.status(402).json({
+        message: "PR review limit reached for Starter plan.",
+        details: "You have used all 5 PR actions included in your plan. Upgrade for more reviews."
+      });
+    }
+
     try {
       // 1. Fetch PR files to get diffs
       const filesResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${number}/files`, {
@@ -683,6 +806,12 @@ export async function registerRoutes(
       });
 
       const result = safeJsonParse(aiResponse.choices[0].message.content || '{"issues": []}') || { "issues": [] };
+
+      // Update usage
+      if (user && user.plan === 'starter') {
+        await User.findByIdAndUpdate(user._id, { $inc: { pullRequestsUsed: 1 } });
+      }
+
       res.json(result);
     } catch (error: any) {
       console.error("PR Audit Error:", error);
@@ -757,6 +886,16 @@ export async function registerRoutes(
     if (!token) return res.status(401).json({ message: "Unauthorized" });
 
     const { owner, repo, number } = req.params;
+    const user = (req as any).user;
+
+    // Plan Enforcement: Starter limit 5 PR actions
+    if (user && user.plan === 'starter' && user.pullRequestsUsed >= 5) {
+      return res.status(402).json({
+        message: "PR merge limit reached for Starter plan.",
+        details: "You have used all 5 PR actions included in your plan. Upgrade for unlimited merges."
+      });
+    }
+
     try {
       const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${number}/merge`, {
         method: "PUT",
@@ -774,6 +913,11 @@ export async function registerRoutes(
       if (!response.ok) {
         const err = await response.json();
         throw new Error(err.message || "Failed to merge PR");
+      }
+
+      // Update usage
+      if (user && user.plan === 'starter') {
+        await User.findByIdAndUpdate(user._id, { $inc: { pullRequestsUsed: 1 } });
       }
 
       res.json({ message: "PR merged successfully" });

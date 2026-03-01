@@ -29,9 +29,9 @@ app.use(express.urlencoded({ extended: false }));
 
 app.use(
   session({
-    cookie: { maxAge: 86400000 },
+    cookie: { maxAge: 604800000 }, // 7 days in milliseconds
     store: new MemoryStore({
-      checkPeriod: 86400000, // prune expired entries every 24h
+      checkPeriod: 604800000,
     }),
     resave: false,
     saveUninitialized: false,
