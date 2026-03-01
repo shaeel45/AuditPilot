@@ -10,6 +10,9 @@ import { connectDB } from "./db";
 const app = express();
 const httpServer = createServer(app);
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/auditpilot";
+const maskedUri = MONGODB_URI.replace(/:([^@]+)@/, ":****@");
+console.log(`[Main] Initializing with MongoDB URI: ${maskedUri}`);
+console.log(`[Main] Environment: NODE_ENV=${process.env.NODE_ENV}, NETLIFY=${process.env.NETLIFY}`);
 
 declare module "http" {
   interface IncomingMessage {
@@ -92,7 +95,10 @@ async function startServer() {
 }
 
 // Global initialization for serverless or local
-const initPromise = startServer();
+const initPromise = startServer().catch(err => {
+  console.error("CRITICAL: Server initialization failed!", err);
+  throw err;
+});
 
 export { app, initPromise };
 
