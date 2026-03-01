@@ -1,9 +1,19 @@
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 import { CheckCircle2, Github, ArrowRight, Shield, Zap, Eye, Terminal } from "lucide-react";
+import { useEffect } from "react";
+import { useAuthStatus } from "@/hooks/use-repos";
 
 export default function Landing() {
+  const { data: authStatus, isLoading } = useAuthStatus();
+  const [, setLocation] = useLocation();
+
+  useEffect(() => {
+    if (!isLoading && authStatus?.authenticated) {
+      setLocation("/app");
+    }
+  }, [authStatus, isLoading, setLocation]);
   return (
     <div className="min-h-screen bg-background text-foreground bg-mesh-light selection:bg-indigo-100 selection:text-indigo-900">
       {/* Navigation */}
@@ -38,9 +48,9 @@ export default function Landing() {
       {/* Hero Section */}
       <div className="pt-32 pb-20 lg:pt-48 lg:pb-32 overflow-hidden">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative">
-          
+
           <div className="text-center max-w-4xl mx-auto z-10 relative">
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5 }}
@@ -53,7 +63,7 @@ export default function Landing() {
               v2.0 Now Available
             </motion.div>
 
-            <motion.h1 
+            <motion.h1
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.1 }}
@@ -62,17 +72,17 @@ export default function Landing() {
               Audit and fix your web app <span className="text-gradient">automatically.</span>
             </motion.h1>
 
-            <motion.p 
+            <motion.p
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.2 }}
               className="text-xl text-slate-600 mb-10 max-w-2xl mx-auto leading-relaxed"
             >
-              Security, performance & accessibility — fixed via GitHub pull requests. 
+              Security, performance & accessibility — fixed via GitHub pull requests.
               Stop writing reports, start shipping fixes.
             </motion.p>
 
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.3 }}
@@ -91,7 +101,7 @@ export default function Landing() {
           </div>
 
           {/* Abstract UI Mockup Background Element */}
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, y: 100 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 1, delay: 0.5, ease: "easeOut" }}
@@ -112,25 +122,25 @@ export default function Landing() {
                     <div className="h-4 w-3/4 bg-slate-50 rounded-md"></div>
                     <div className="h-4 w-1/2 bg-slate-50 rounded-md"></div>
                     <div className="space-y-2 mt-8">
-                       <div className="flex items-center gap-3 p-3 bg-red-50 border border-red-100 rounded-lg">
-                          <div className="w-2 h-2 rounded-full bg-red-500"></div>
-                          <div className="h-2 w-24 bg-red-200 rounded"></div>
-                          <div className="ml-auto h-6 w-16 bg-white rounded border border-red-100"></div>
-                       </div>
-                       <div className="flex items-center gap-3 p-3 bg-amber-50 border border-amber-100 rounded-lg">
-                          <div className="w-2 h-2 rounded-full bg-amber-500"></div>
-                          <div className="h-2 w-32 bg-amber-200 rounded"></div>
-                          <div className="ml-auto h-6 w-16 bg-white rounded border border-amber-100"></div>
-                       </div>
+                      <div className="flex items-center gap-3 p-3 bg-red-50 border border-red-100 rounded-lg">
+                        <div className="w-2 h-2 rounded-full bg-red-500"></div>
+                        <div className="h-2 w-24 bg-red-200 rounded"></div>
+                        <div className="ml-auto h-6 w-16 bg-white rounded border border-red-100"></div>
+                      </div>
+                      <div className="flex items-center gap-3 p-3 bg-amber-50 border border-amber-100 rounded-lg">
+                        <div className="w-2 h-2 rounded-full bg-amber-500"></div>
+                        <div className="h-2 w-32 bg-amber-200 rounded"></div>
+                        <div className="ml-auto h-6 w-16 bg-white rounded border border-amber-100"></div>
+                      </div>
                     </div>
                   </div>
                   <div className="space-y-4">
-                     <div className="h-32 rounded-lg bg-gradient-to-br from-indigo-50 to-violet-50 border border-indigo-100 flex items-center justify-center">
-                        <div className="text-center">
-                          <div className="text-3xl font-bold text-indigo-600">72</div>
-                          <div className="text-xs text-indigo-400 uppercase tracking-wider mt-1">Health Score</div>
-                        </div>
-                     </div>
+                    <div className="h-32 rounded-lg bg-gradient-to-br from-indigo-50 to-violet-50 border border-indigo-100 flex items-center justify-center">
+                      <div className="text-center">
+                        <div className="text-3xl font-bold text-indigo-600">72</div>
+                        <div className="text-xs text-indigo-400 uppercase tracking-wider mt-1">Health Score</div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -144,17 +154,17 @@ export default function Landing() {
       <div id="features" className="py-24 bg-white/50 backdrop-blur-sm border-t border-slate-100">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-12">
-            <FeatureCard 
+            <FeatureCard
               icon={<Shield className="h-6 w-6 text-indigo-600" />}
               title="Security Audits"
               description="Automatically detect and fix common vulnerabilities like XSS, CSRF, and outdated dependencies."
             />
-            <FeatureCard 
+            <FeatureCard
               icon={<Zap className="h-6 w-6 text-indigo-600" />}
               title="Performance Tuning"
               description="Optimize Core Web Vitals, image loading, and bundle sizes with one-click PRs."
             />
-            <FeatureCard 
+            <FeatureCard
               icon={<Eye className="h-6 w-6 text-indigo-600" />}
               title="Accessibility"
               description="Ensure your app meets WCAG 2.1 standards with automated ARIA and semantic fixes."
@@ -162,7 +172,7 @@ export default function Landing() {
           </div>
         </div>
       </div>
-      
+
       {/* Footer */}
       <footer className="py-12 border-t border-slate-100 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center text-slate-500 text-sm">

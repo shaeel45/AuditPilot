@@ -6,7 +6,10 @@ const UserSchema = new mongoose.Schema({
     displayName: { type: String },
     avatarUrl: { type: String },
     email: { type: String },
-    accessToken: { type: String }, // Store for API calls, though session is preferred for security
+    accessToken: { type: String },
+    plan: { type: String, default: 'starter' },
+    auditsUsed: { type: Number, default: 0 },
+    pullRequestsUsed: { type: Number, default: 0 },
     lastLogin: { type: Date, default: Date.now },
 }, { timestamps: true });
 
