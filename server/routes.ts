@@ -9,14 +9,13 @@ const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
   defaultHeaders: {
-    "Authorization": `Bearer ${process.env.AI_INTEGRATIONS_OPENAI_API_KEY}`,
     "HTTP-Referer": "https://auditspilot.netlify.app",
     "X-Title": "AuditsPilot"
   }
 });
 
-console.log("OPENROUTER KEY PREFIX:", process.env.AI_INTEGRATIONS_OPENAI_API_KEY?.slice(0, 10));
-console.log("BASE URL:", process.env.AI_INTEGRATIONS_OPENAI_BASE_URL);
+console.log("AI Config: API Key present?", !!process.env.AI_INTEGRATIONS_OPENAI_API_KEY);
+console.log("AI Config: Base URL:", process.env.AI_INTEGRATIONS_OPENAI_BASE_URL);
 
 export async function registerRoutes(
   httpServer: Server,
@@ -380,7 +379,7 @@ export async function registerRoutes(
       let aiResponse;
       try {
         aiResponse = await openai.chat.completions.create({
-          model: "nvidia/nemotron-3-nano-30b-a3b:free",
+          model: "google/gemini-2.0-flash-exp:free",
           messages: [
             {
               role: "system",
@@ -720,7 +719,7 @@ export async function registerRoutes(
       `;
 
       const response = await openai.chat.completions.create({
-        model: "nvidia/nemotron-3-nano-30b-a3b:free",
+        model: "google/gemini-2.0-flash-exp:free",
         messages: [
           {
             role: "system",
@@ -809,7 +808,7 @@ export async function registerRoutes(
 
       // 3. AI Analysis of the PR
       const aiResponse = await openai.chat.completions.create({
-        model: "nvidia/nemotron-3-nano-30b-a3b:free",
+        model: "google/gemini-2.0-flash-exp:free",
         messages: [
           {
             role: "system",
