@@ -447,6 +447,15 @@ export async function registerRoutes(
       res.json({ audit, issues: savedItems });
     } catch (error: any) {
       console.error("Robust AI Audit Error:", error);
+
+      // Specifically handle 401/403 from AI Provider
+      if (error.status === 401 || error.status === 403 || error.message?.includes('401') || error.message?.includes('403')) {
+        return res.status(error.status || 401).json({
+          message: "AI Provider Authentication failed. Please check your AI_INTEGRATIONS_OPENAI_API_KEY and BASE_URL in Netlify.",
+          details: error.message
+        });
+      }
+
       res.status(500).json({ message: error.message || "An unexpected error occurred during the audit process." });
     }
   });
@@ -703,7 +712,7 @@ export async function registerRoutes(
       `;
 
       const response = await openai.chat.completions.create({
-        model: "stepfun/step-3.5-flash:free",
+        model: "nvidia/nemotron-3-nano-30b-a3b:free",
         messages: [
           {
             role: "system",
@@ -792,7 +801,7 @@ export async function registerRoutes(
 
       // 3. AI Analysis of the PR
       const aiResponse = await openai.chat.completions.create({
-        model: "stepfun/step-3.5-flash:free",
+        model: "nvidia/nemotron-3-nano-30b-a3b:free",
         messages: [
           {
             role: "system",
