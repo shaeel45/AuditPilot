@@ -1,7 +1,5 @@
 import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
-import session from "express-session";
-import MongoStore from "connect-mongo";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
@@ -29,19 +27,6 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
-
-app.use(
-  session({
-    cookie: { maxAge: 604800000 }, // 7 days in milliseconds
-    store: ((MongoStore as any).default || MongoStore).create({
-      mongoUrl: MONGODB_URI,
-      ttl: 7 * 24 * 60 * 60, // 7 days
-    }),
-    resave: false,
-    saveUninitialized: false,
-    secret: process.env.SESSION_SECRET || "audit-pilot-secret",
-  }),
-);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {

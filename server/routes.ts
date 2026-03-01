@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import OpenAI from "openai";
 import { User } from "./models/User";
 import type { Request, Response, NextFunction } from "express";
+import jwt from "jsonwebtoken";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -43,24 +44,24 @@ export async function registerRoutes(
 
   // Middleware to protect routes
   async function requireAuth(req: Request, res: Response, next: NextFunction) {
-    const token = (req.session as any).githubAccessToken;
-    if (!token) {
-      return res.status(401).json({ message: "Unauthorized: No GitHub session found" });
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith("Bearer ")) {
+      return res.status(401).json({ message: "Unauthorized: Missing or invalid token" });
     }
 
-    const userId = (req.session as any).userId;
-    if (userId) {
-      try {
-        const user = await User.findById(userId);
-        if (user) {
-          (req as any).user = user;
-        }
-      } catch (err) {
-        console.error("Error fetching user in middleware:", err);
+    const token = authHeader.split(" ")[1];
+    try {
+      const decoded: any = jwt.verify(token, process.env.JWT_SECRET || "audit-pilot-secret");
+      const user = await User.findById(decoded.userId);
+      if (!user) {
+        return res.status(401).json({ message: "Unauthorized: User not found" });
       }
+      (req as any).user = user;
+      (req as any).githubAccessToken = user.accessToken;
+      next();
+    } catch (err) {
+      return res.status(401).json({ message: "Unauthorized: Invalid token" });
     }
-
-    next();
   }
 
   // === Auth Routes ===
@@ -96,7 +97,6 @@ export async function registerRoutes(
       const tokenData: any = await tokenResponse.json();
       if (tokenData.access_token) {
         const token = tokenData.access_token;
-        (req.session as any).githubAccessToken = token;
 
         // Fetch user profile from GitHub to store in MongoDB
         const userProfileResponse = await fetch("https://api.github.com/user", {
@@ -127,8 +127,14 @@ export async function registerRoutes(
           { upsert: true, new: true }
         );
 
-        (req.session as any).userId = user._id;
-        res.redirect("/app");
+        // Sign JWT
+        const jwtToken = jwt.sign(
+          { userId: user._id },
+          process.env.JWT_SECRET || "audit-pilot-secret",
+          { expiresIn: "7d" }
+        );
+
+        res.redirect(`/app?token=${jwtToken}`);
       } else {
         res.status(401).json({ message: "Failed to obtain access token" });
       }
@@ -139,23 +145,20 @@ export async function registerRoutes(
   });
 
   app.get("/api/auth/logout", (req, res) => {
-    req.session.destroy((err) => {
-      if (err) {
-        return res.status(500).json({ message: "Failed to log out" });
-      }
-      res.clearCookie("connect.sid");
-      res.json({ message: "Logged out successfully" });
-    });
+    res.json({ message: "Logged out successfully" });
   });
 
   app.get("/api/auth/user", async (req, res) => {
-    const userId = (req.session as any).userId;
-    if (!userId) {
+    // Check for Authorization header
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith("Bearer ")) {
       return res.json({ authenticated: false });
     }
 
+    const token = authHeader.split(" ")[1];
     try {
-      const user = await User.findById(userId);
+      const decoded: any = jwt.verify(token, process.env.JWT_SECRET || "audit-pilot-secret");
+      const user = await User.findById(decoded.userId);
       if (user) {
         res.json({ authenticated: true, user });
       } else {
@@ -169,7 +172,7 @@ export async function registerRoutes(
   // === Repo Routes ===
 
   app.get("/api/repos", requireAuth, async (req, res) => {
-    const token = (req.session as any).githubAccessToken;
+    const token = (req as any).githubAccessToken;
     // (requireAuth already checks token)
 
     try {
@@ -194,7 +197,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/pulls", requireAuth, async (req, res) => {
-    const token = (req.session as any).githubAccessToken;
+    const token = (req as any).githubAccessToken;
     // (requireAuth already checks token)
 
     try {
@@ -247,7 +250,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/repos/:owner/:repo/branches", requireAuth, async (req, res) => {
-    const token = (req.session as any).githubAccessToken;
+    const token = (req as any).githubAccessToken;
     if (!token) return res.status(401).json({ message: "Unauthorized" });
 
     const { owner, repo } = req.params;
@@ -269,9 +272,9 @@ export async function registerRoutes(
   });
 
   app.post("/api/repos/:owner/:repo/audit", requireAuth, async (req, res) => {
-    const token = (req.session as any).githubAccessToken;
+    const token = (req as any).githubAccessToken;
     if (!token) {
-      return res.status(401).json({ message: "No GitHub session found. Please log in again." });
+      return res.status(401).json({ message: "Authentication required. Please log in again." });
     }
 
     const { owner, repo } = req.params;
@@ -469,7 +472,7 @@ export async function registerRoutes(
   });
 
   app.post("/api/repos/:owner/:repo/fix", requireAuth, async (req, res) => {
-    const token = (req.session as any).githubAccessToken;
+    const token = (req as any).githubAccessToken;
     if (!token) return res.status(401).json({ message: "Unauthorized" });
 
     const { owner, repo } = req.params;
@@ -757,7 +760,7 @@ export async function registerRoutes(
   // === PR Detail and AI Flow ===
 
   app.get("/api/repos/:owner/:repo/pulls/:number/files", async (req, res) => {
-    const token = (req.session as any).githubAccessToken;
+    const token = (req as any).githubAccessToken;
     if (!token) return res.status(401).json({ message: "Unauthorized" });
 
     const { owner, repo, number } = req.params;
@@ -779,7 +782,7 @@ export async function registerRoutes(
   });
 
   app.post("/api/repos/:owner/:repo/pulls/:number/audit", async (req, res) => {
-    const token = (req.session as any).githubAccessToken;
+    const token = (req as any).githubAccessToken;
     if (!token) return res.status(401).json({ message: "Unauthorized" });
 
     const { owner, repo, number } = req.params;
@@ -837,7 +840,7 @@ export async function registerRoutes(
   });
 
   app.post("/api/repos/:owner/:repo/pulls/:number/fix", async (req, res) => {
-    const token = (req.session as any).githubAccessToken;
+    const token = (req as any).githubAccessToken;
     if (!token) return res.status(401).json({ message: "Unauthorized" });
 
     const { owner, repo, number } = req.params;
@@ -899,7 +902,7 @@ export async function registerRoutes(
   });
 
   app.post("/api/repos/:owner/:repo/pulls/:number/merge", requireAuth, async (req, res) => {
-    const token = (req.session as any).githubAccessToken;
+    const token = (req as any).githubAccessToken;
     if (!token) return res.status(401).json({ message: "Unauthorized" });
 
     const { owner, repo, number } = req.params;
@@ -944,7 +947,7 @@ export async function registerRoutes(
   });
 
   app.patch("/api/repos/:owner/:repo/pulls/:number", requireAuth, async (req, res) => {
-    const token = (req.session as any).githubAccessToken;
+    const token = (req as any).githubAccessToken;
     const { owner, repo, number } = req.params;
     const { base, title, body, state } = req.body;
 

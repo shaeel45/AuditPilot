@@ -52,12 +52,13 @@ export default function Dashboard() {
 
   const handleLogout = async () => {
     try {
-      const res = await fetch("/api/auth/logout");
-      if (res.ok) {
-        window.location.href = "/";
-      }
+      localStorage.removeItem("audit_token");
+      await fetch("/api/auth/logout");
+      window.location.href = "/";
     } catch (err) {
       console.error("Logout failed:", err);
+      // Fallback: still redirect
+      window.location.href = "/";
     }
   };
 

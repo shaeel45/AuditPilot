@@ -7,7 +7,8 @@ import NotFound from "@/pages/not-found";
 import Landing from "@/pages/Landing";
 import Auth from "@/pages/Auth";
 import Dashboard from "@/pages/Dashboard";
-import Pricing from "@/pages/Pricing"; // Need to create this one too
+import Pricing from "@/pages/Pricing";
+import { useEffect } from "react";
 
 function Router() {
   return (
@@ -22,6 +23,17 @@ function Router() {
 }
 
 function App() {
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("token");
+    if (token) {
+      localStorage.setItem("audit_token", token);
+      // Remove token from URL to keep it clean
+      const newUrl = window.location.pathname;
+      window.history.replaceState({}, document.title, newUrl);
+    }
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
