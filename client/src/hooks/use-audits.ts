@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { InsertAudit, InsertAuditItem } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 
 // Types for creating/updating
 type UpdateAuditParams = { id: string } & Partial<InsertAudit>;
@@ -10,8 +11,7 @@ export function useAudits() {
     return useQuery({
         queryKey: ["/api/audits"],
         queryFn: async () => {
-            const res = await fetch("/api/audits");
-            if (!res.ok) throw new Error("Failed to fetch audits");
+            const res = await apiRequest("GET", "/api/audits");
             return await res.json();
         },
     });
@@ -21,10 +21,13 @@ export function useAudit(id: string) {
     return useQuery({
         queryKey: ["/api/audits", id],
         queryFn: async () => {
-            const res = await fetch(`/api/audits/${id}`);
-            if (res.status === 404) return null;
-            if (!res.ok) throw new Error("Failed to fetch audit");
-            return await res.json();
+            try {
+                const res = await apiRequest("GET", `/api/audits/${id}`);
+                return await res.json();
+            } catch (err: any) {
+                if (err.message?.includes('404')) return null;
+                throw err;
+            }
         },
         enabled: !!id,
     });
@@ -36,16 +39,7 @@ export function useCreateAudit() {
 
     return useMutation({
         mutationFn: async (data: InsertAudit) => {
-            const res = await fetch("/api/audits", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(data),
-            });
-
-            if (!res.ok) {
-                const error = await res.json();
-                throw new Error(error.message || "Failed to create audit");
-            }
+            const res = await apiRequest("POST", "/api/audits", data);
             return await res.json();
         },
         onSuccess: () => {
@@ -64,12 +58,7 @@ export function useUpdateAudit() {
 
     return useMutation({
         mutationFn: async ({ id, ...data }: UpdateAuditParams) => {
-            const res = await fetch(`/api/audits/${id}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(data),
-            });
-            if (!res.ok) throw new Error("Failed to update audit");
+            const res = await apiRequest("PATCH", `/api/audits/${id}`, data);
             return await res.json();
         },
         onSuccess: (data: any) => {
@@ -86,10 +75,7 @@ export function useDeleteAudit() {
 
     return useMutation({
         mutationFn: async (id: string) => {
-            const res = await fetch(`/api/audits/${id}`, {
-                method: "DELETE",
-            });
-            if (!res.ok) throw new Error("Failed to delete audit");
+            await apiRequest("DELETE", `/api/audits/${id}`);
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["/api/audits"] });
@@ -106,12 +92,7 @@ export function useCreateAuditItem(auditId: string) {
 
     return useMutation({
         mutationFn: async (data: Omit<InsertAuditItem, "auditId">) => {
-            const res = await fetch(`/api/audits/${auditId}/items`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(data),
-            });
-            if (!res.ok) throw new Error("Failed to add item");
+            const res = await apiRequest("POST", `/api/audits/${auditId}/items`, data);
             return await res.json();
         },
         onSuccess: () => {
@@ -126,12 +107,7 @@ export function useUpdateAuditItem(auditId: string) {
 
     return useMutation({
         mutationFn: async ({ id, ...data }: UpdateAuditItemParams) => {
-            const res = await fetch(`/api/audit-items/${id}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(data),
-            });
-            if (!res.ok) throw new Error("Failed to update item");
+            const res = await apiRequest("PATCH", `/api/audit-items/${id}`, data);
             return await res.json();
         },
         onSuccess: () => {
@@ -146,10 +122,7 @@ export function useDeleteAuditItem(auditId: string) {
 
     return useMutation({
         mutationFn: async (id: string) => {
-            const res = await fetch(`/api/audit-items/${id}`, {
-                method: "DELETE",
-            });
-            if (!res.ok) throw new Error("Failed to delete item");
+            await apiRequest("DELETE", `/api/audit-items/${id}`);
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["/api/audits", auditId] });
@@ -166,11 +139,7 @@ export function useGenerateInsights(auditId: string) {
 
     return useMutation({
         mutationFn: async () => {
-            const res = await fetch(`/api/audits/${auditId}/generate-insights`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-            });
-            if (!res.ok) throw new Error("Failed to generate insights");
+            const res = await apiRequest("POST", `/api/audits/${auditId}/generate-insights`);
             return await res.json();
         },
         onSuccess: () => {
@@ -196,14 +165,7 @@ export function useRepoAudit() {
 
     return useMutation({
         mutationFn: async ({ owner, repo }: { owner: string; repo: string }) => {
-            const res = await fetch(`/api/repos/${owner}/${repo}/audit`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-            });
-            if (!res.ok) {
-                const error = await res.json();
-                throw new Error(error.message || "Failed to perform repository audit");
-            }
+            const res = await apiRequest("POST", `/api/repos/${owner}/${repo}/audit`);
             return await res.json();
         },
         onSuccess: (data: any) => {
@@ -228,8 +190,7 @@ export function useBranches(owner: string, repo: string) {
         queryKey: ["/api/repos", owner, repo, "branches"],
         queryFn: async () => {
             if (!owner || !repo) return [];
-            const res = await fetch(`/api/repos/${owner}/${repo}/branches`);
-            if (!res.ok) throw new Error("Failed to fetch branches");
+            const res = await apiRequest("GET", `/api/repos/${owner}/${repo}/branches`);
             return await res.json();
         },
         enabled: !!owner && !!repo,
@@ -241,15 +202,7 @@ export function useApplyFix() {
 
     return useMutation({
         mutationFn: async ({ owner, repo, issues, targetBranch }: { owner: string; repo: string; issues: any[]; targetBranch: string }) => {
-            const res = await fetch(`/api/repos/${owner}/${repo}/fix`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ issues, targetBranch }),
-            });
-            if (!res.ok) {
-                const error = await res.json();
-                throw new Error(error.message || "Failed to apply fixes");
-            }
+            const res = await apiRequest("POST", `/api/repos/${owner}/${repo}/fix`, { issues, targetBranch });
             return await res.json();
         },
         onSuccess: (data: any) => {

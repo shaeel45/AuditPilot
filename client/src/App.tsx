@@ -23,16 +23,20 @@ function Router() {
 }
 
 function App() {
+  // Capture token immediately on load
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get("token");
+  if (token) {
+    localStorage.setItem("audit_token", token);
+  }
+
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get("token");
+    // Only clean URL in useEffect
     if (token) {
-      localStorage.setItem("audit_token", token);
-      // Remove token from URL to keep it clean
       const newUrl = window.location.pathname;
       window.history.replaceState({}, document.title, newUrl);
     }
-  }, []);
+  }, [token]);
 
   return (
     <QueryClientProvider client={queryClient}>
