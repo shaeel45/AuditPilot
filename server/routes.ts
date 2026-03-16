@@ -10,7 +10,7 @@ const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: (process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/$/, ""),
   defaultHeaders: {
-    "HTTP-Referer": "https://auditspilot.netlify.app",
+    "HTTP-Referer": "https://auditpilots.netlify.app",
     "X-Title": "AuditsPilot"
   }
 });
@@ -68,7 +68,7 @@ export async function registerRoutes(
 
   app.get("/api/auth/github", (req, res) => {
     const clientId = process.env.GITHUB_CLIENT_ID;
-    const redirectUri = `${req.protocol}://${req.get("host")}/api/auth/github/callback`;
+    const redirectUri = process.env.GITHUB_REDIRECT_URI || `${req.protocol}://${req.get("host")}/api/auth/github/callback`;
     const scope = "repo read:user";
     const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}`;
     res.redirect(githubAuthUrl);
