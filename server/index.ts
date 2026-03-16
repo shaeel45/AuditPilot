@@ -6,6 +6,7 @@ import { createServer } from "http";
 import { connectDB } from "./db";
 
 const app = express();
+app.set("trust proxy", 1);
 const httpServer = createServer(app);
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/auditpilot";
 const maskedUri = MONGODB_URI.replace(/:([^@]+)@/, ":****@");
