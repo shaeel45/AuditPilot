@@ -1,8 +1,9 @@
 import { Button } from "@/components/ui/button";
-import { Check, Loader2 } from "lucide-react";
 import { Link } from "wouter";
+import { Check, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
+import Navbar from "@/components/layout/Navbar";
 
 export default function Pricing() {
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
@@ -39,31 +40,7 @@ export default function Pricing() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-foreground bg-mesh-light selection:bg-indigo-100 selection:text-indigo-900">
-      {/* Navigation - Duplicated from Landing for now, normally would be a component */}
-      <nav className="fixed w-full z-50 glass-panel border-b border-slate-200/50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16 items-center">
-            <Link href="/">
-              <div className="flex-shrink-0 flex items-center gap-2 cursor-pointer">
-                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-600 to-violet-600 flex items-center justify-center text-white font-bold">
-                  A
-                </div>
-                <span className="font-bold text-xl tracking-tight">AuditPilot</span>
-              </div>
-            </Link>
-            <div className="hidden md:flex items-center space-x-8">
-               <Link href="/" className="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">Home</Link>
-            </div>
-            <div className="flex items-center gap-4">
-              <Link href="/auth">
-                <Button className="bg-slate-900 hover:bg-slate-800 text-white rounded-full px-6 shadow-lg shadow-indigo-500/20 transition-all hover:shadow-indigo-500/40">
-                  Connect GitHub
-                </Button>
-              </Link>
-            </div>
-          </div>
-        </div>
-      </nav>
+      <Navbar />
 
       <div className="pt-32 pb-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">

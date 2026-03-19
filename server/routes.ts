@@ -443,8 +443,11 @@ export async function registerRoutes(
           label: issue.description || "Point of interest detected",
           type: issue.type || "security",
           value: issue.file || "Root",
+          severity: issue.severity || "medium",
+          old_code: issue.fix?.old_code || issue.old_code,
+          new_code: issue.fix?.new_code || issue.new_code,
           complianceStatus: "non_compliant",
-          auditorNotes: `Severity: ${issue.severity}. Recommendation: ${issue.newCode ? 'Apply suggested fix' : 'Manual review required'}`
+          auditorNotes: `Rank: ${issue.severity}. Recommendation: ${issue.new_code ? 'Apply suggested fix' : 'Manual review required'}`
         });
         savedItems.push({ ...issue, dbId: item._id });
       }
@@ -915,6 +918,21 @@ export async function registerRoutes(
     }
 
     try {
+      // 1. Get PR info to know the branch name
+      const prResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${number}`, {
+        headers: {
+          Authorization: `token ${token}`,
+          "User-Agent": "Audit-Pilot-App"
+        },
+      });
+
+      let branchName = "";
+      if (prResponse.ok) {
+        const prData = await prResponse.json();
+        branchName = prData.head?.ref || "";
+      }
+
+      // 2. Perform merge
       const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${number}/merge`, {
         method: "PUT",
         headers: {
@@ -933,13 +951,26 @@ export async function registerRoutes(
         throw new Error(err.message || "Failed to merge PR");
       }
 
+      // 3. Delete branch if it's a temporary audit branch
+      if (branchName && branchName.startsWith("audit-")) {
+        console.log(`Deleting temporary branch: ${branchName}`);
+        await fetch(`https://api.github.com/repos/${owner}/${repo}/git/refs/heads/${branchName}`, {
+          method: "DELETE",
+          headers: {
+            Authorization: `token ${token}`,
+            "User-Agent": "Audit-Pilot-App"
+          },
+        });
+      }
+
       // Update usage
       if (user) {
         await User.findByIdAndUpdate(user._id, { $inc: { pullRequestsUsed: 1 } });
       }
 
-      res.json({ message: "PR merged successfully" });
+      res.json({ message: "PR merged and branch cleaned up successfully" });
     } catch (error: any) {
+      console.error("Merge error:", error);
       res.status(500).json({ message: error.message });
     }
   });
@@ -1079,6 +1110,35 @@ export async function registerRoutes(
     }
 
     res.json({ received: true });
+  });
+
+  app.post("/api/billing/verify-session", requireAuth, async (req, res) => {
+    const { sessionId } = req.body;
+    const user = (req as any).user;
+
+    try {
+      const session = await stripe.checkout.sessions.retrieve(sessionId);
+      
+      if (session.payment_status === 'paid') {
+        const plan = session.metadata?.plan;
+        const subscriptionId = session.subscription as string;
+
+        if (plan) {
+          await User.findByIdAndUpdate(user._id, {
+            plan: plan,
+            stripeSubscriptionId: subscriptionId
+          });
+          
+          const updatedUser = await User.findById(user._id);
+          return res.json({ success: true, plan: updatedUser?.plan });
+        }
+      }
+      
+      res.json({ success: false });
+    } catch (error: any) {
+      console.error("Session Verification Error:", error);
+      res.status(500).json({ message: "Failed to verify session" });
+    }
   });
 
   return httpServer;

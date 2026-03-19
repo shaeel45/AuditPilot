@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { CheckCircle2, Github, ArrowRight, Shield, Zap, Eye, Terminal } from "lucide-react";
 import { useEffect } from "react";
 import { useAuthStatus } from "@/hooks/use-repos";
+import Navbar from "@/components/layout/Navbar";
 
 export default function Landing() {
   const { data: authStatus, isLoading } = useAuthStatus();
@@ -16,34 +17,7 @@ export default function Landing() {
   }, [authStatus, isLoading, setLocation]);
   return (
     <div className="min-h-screen bg-background text-foreground bg-mesh-light selection:bg-indigo-100 selection:text-indigo-900">
-      {/* Navigation */}
-      <nav className="fixed w-full z-50 glass-panel border-b border-slate-200/50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16 items-center">
-            <div className="flex-shrink-0 flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-600 to-violet-600 flex items-center justify-center text-white font-bold">
-                A
-              </div>
-              <span className="font-bold text-xl tracking-tight">AuditPilot</span>
-            </div>
-            <div className="hidden md:flex items-center space-x-8">
-              <a href="#features" className="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">Features</a>
-              <a href="#how-it-works" className="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">How it Works</a>
-              <Link href="/pricing" className="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">Pricing</Link>
-            </div>
-            <div className="flex items-center gap-4">
-              <Link href="/auth">
-                <span className="hidden md:block text-sm font-medium text-slate-600 hover:text-indigo-600 cursor-pointer transition-colors">Log in</span>
-              </Link>
-              <Link href="/auth">
-                <Button className="bg-slate-900 hover:bg-slate-800 text-white rounded-full px-6 shadow-lg shadow-indigo-500/20 transition-all hover:shadow-indigo-500/40">
-                  Connect GitHub
-                </Button>
-              </Link>
-            </div>
-          </div>
-        </div>
-      </nav>
+      <Navbar />
 
       {/* Hero Section */}
       <div className="pt-32 pb-20 lg:pt-48 lg:pb-32 overflow-hidden">
