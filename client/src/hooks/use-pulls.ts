@@ -1,24 +1,20 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { api } from "@/lib/api-service";
 
 export function usePulls() {
     return useQuery<any[]>({
-        queryKey: ["/api/pulls"],
-        queryFn: async () => {
-            const res = await apiRequest("GET", "/api/pulls");
-            return await res.json();
-        },
+        queryKey: ["pulls"],
+        queryFn: () => api.getPulls(),
     });
 }
 
 export function usePRFiles(owner: string, repo: string, number: number) {
     return useQuery<any[]>({
-        queryKey: ["/api/repos", owner, repo, "pulls", number, "files"],
+        queryKey: ["pull-files", owner, repo, number],
         queryFn: async () => {
             if (!owner || !repo || !number) return [];
-            const res = await apiRequest("GET", `/api/repos/${owner}/${repo}/pulls/${number}/files`);
-            return await res.json();
+            return api.getPullFiles(owner, repo, number.toString());
         },
         enabled: !!owner && !!repo && !!number,
     });
@@ -27,8 +23,7 @@ export function usePRFiles(owner: string, repo: string, number: number) {
 export function usePRAudit() {
     return useMutation({
         mutationFn: async ({ owner, repo, number }: { owner: string; repo: string; number: number }) => {
-            const res = await apiRequest("POST", `/api/repos/${owner}/${repo}/pulls/${number}/audit`);
-            return await res.json();
+            return api.auditPull(owner, repo, number);
         },
     });
 }
@@ -39,11 +34,10 @@ export function usePRFix() {
 
     return useMutation({
         mutationFn: async ({ owner, repo, number, issues }: { owner: string; repo: string; number: number; issues: any[] }) => {
-            const res = await apiRequest("POST", `/api/repos/${owner}/${repo}/pulls/${number}/fix`, { issues });
-            return await res.json();
+            return api.fixPull(owner, repo, number, issues);
         },
         onSuccess: (data, variables) => {
-            queryClient.invalidateQueries({ queryKey: ["/api/repos", variables.owner, variables.repo, "pulls", variables.number, "files"] });
+            queryClient.invalidateQueries({ queryKey: ["pull-files", variables.owner, variables.repo, variables.number] });
             toast({
                 title: "PR Corrected",
                 description: "AI has pushed fixes to the Pull Request branch.",
@@ -58,11 +52,10 @@ export function usePRMerge() {
 
     return useMutation({
         mutationFn: async ({ owner, repo, number }: { owner: string; repo: string; number: number }) => {
-            const res = await apiRequest("POST", `/api/repos/${owner}/${repo}/pulls/${number}/merge`);
-            return await res.json();
+            return api.mergePull(owner, repo, number);
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ["/api/pulls"] });
+            queryClient.invalidateQueries({ queryKey: ["pulls"] });
             toast({
                 title: "Success",
                 description: "Pull Request merged successfully",
@@ -77,11 +70,10 @@ export function useUpdatePR() {
 
     return useMutation({
         mutationFn: async ({ owner, repo, number, data }: { owner: string; repo: string; number: number; data: any }) => {
-            const res = await apiRequest("PATCH", `/api/repos/${owner}/${repo}/pulls/${number}`, data);
-            return await res.json();
+            return api.updatePull(owner, repo, number, data);
         },
         onSuccess: (data, variables) => {
-            queryClient.invalidateQueries({ queryKey: ["/api/pulls"] });
+            queryClient.invalidateQueries({ queryKey: ["pulls"] });
             toast({
                 title: "PR Updated",
                 description: `Successfully updated PR #${variables.number}`,

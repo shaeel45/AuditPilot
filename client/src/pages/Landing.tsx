@@ -5,10 +5,26 @@ import { CheckCircle2, Github, ArrowRight, Shield, Zap, Eye, Terminal } from "lu
 import { useEffect } from "react";
 import { useAuthStatus } from "@/hooks/use-repos";
 import Navbar from "@/components/layout/Navbar";
+import Head from "@/components/seo/Head";
+import { APP_NAME } from "@/lib/constants";
 
 export default function Landing() {
   const { data: authStatus, isLoading } = useAuthStatus();
   const [, setLocation] = useLocation();
+
+  const structuredData = {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": APP_NAME,
+    "operatingSystem": "Web",
+    "applicationCategory": "DeveloperApplication",
+    "description": "Automated AI-powered audits for web application security, performance, and accessibility.",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    }
+  };
 
   useEffect(() => {
     if (!isLoading && authStatus?.authenticated) {
@@ -16,7 +32,12 @@ export default function Landing() {
     }
   }, [authStatus, isLoading, setLocation]);
   return (
-    <div className="min-h-screen bg-background text-foreground bg-mesh-light selection:bg-indigo-100 selection:text-indigo-900">
+    <div className="min-h-screen bg-slate-50 text-foreground selection:bg-indigo-100 selection:text-indigo-900 overflow-x-hidden">
+      <Head />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
+      />
       <Navbar />
 
       {/* Hero Section */}

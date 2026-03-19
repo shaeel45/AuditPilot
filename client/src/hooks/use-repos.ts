@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { api } from "@/lib/api-service";
 
 interface GitHubRepo {
     id: number;
@@ -15,21 +15,17 @@ interface GitHubRepo {
 
 export function useRepos() {
     return useQuery<GitHubRepo[]>({
-        queryKey: ["/api/repos"],
-        queryFn: async () => {
-            const res = await apiRequest("GET", "/api/repos");
-            return await res.json();
-        },
+        queryKey: ["repos"],
+        queryFn: () => api.getRepos(),
     });
 }
 
 export function useAuthStatus() {
     return useQuery({
-        queryKey: ["/api/auth/user"],
+        queryKey: ["auth-status"],
         queryFn: async () => {
             try {
-                const res = await apiRequest("GET", "/api/auth/user");
-                const data = await res.json();
+                const data = await api.getAuthStatus();
                 if (data.authenticated) {
                     localStorage.setItem("authenticated", "true");
                 } else {

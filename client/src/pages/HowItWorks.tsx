@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
 import Navbar from "@/components/layout/Navbar";
+import Head from "@/components/seo/Head";
 
 export default function HowItWorks() {
   const steps = [
@@ -52,6 +53,10 @@ export default function HowItWorks() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-foreground bg-mesh-light selection:bg-indigo-100 selection:text-indigo-900">
+      <Head 
+        title="How it Works - AuditPilot" 
+        description="Stop writing security reports and start shipping fixes. Learn how AuditPilot automates the entire code health journey." 
+      />
       <Navbar />
 
       <main className="pt-32 pb-20">

@@ -4,6 +4,7 @@ import { Check, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import Navbar from "@/components/layout/Navbar";
+import Head from "@/components/seo/Head";
 
 export default function Pricing() {
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
@@ -40,6 +41,10 @@ export default function Pricing() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-foreground bg-mesh-light selection:bg-indigo-100 selection:text-indigo-900">
+      <Head
+        title="Pricing - AuditPilot"
+        description="Choose the perfect plan for your team's code health and security needs. Start with a free audit today."
+      />
       <Navbar />
 
       <div className="pt-32 pb-20">
