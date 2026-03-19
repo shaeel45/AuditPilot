@@ -9,6 +9,8 @@ import { useLocation } from "wouter";
 import { useAudits, useRepoAudit, useBranches, useApplyFix } from "@/hooks/use-audits";
 import { useRepos, useAuthStatus } from "@/hooks/use-repos";
 import { usePulls, usePRFiles, usePRAudit, usePRFix, usePRMerge, useUpdatePR } from "@/hooks/use-pulls";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useToast } from "@/hooks/use-toast";
 
 // Types
 type Step = 'repos' | 'audit' | 'results' | 'fix' | 'pr' | 'diff' | 'audits' | 'pulls' | 'pull_detail' | 'pull_results' | 'pull_diff' | 'billing' | 'settings';
@@ -41,6 +43,9 @@ export default function Dashboard() {
   const { data: audits, isLoading: isLoadingAudits } = useAudits();
   const { data: repos, isLoading: isLoadingRepos } = useRepos();
   const { data: authStatus, isLoading: isLoadingAuth } = useAuthStatus();
+  const [showLimitModal, setShowLimitModal] = useState<{ show: boolean, type: 'audit' | 'pr' }>({ show: false, type: 'audit' });
+  const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
+  const { toast } = useToast();
   const auditMutation = useRepoAudit();
   const [, setLocation] = useLocation();
   const local = localStorage.getItem("authenticated");
@@ -81,14 +86,23 @@ export default function Dashboard() {
           <NavItem active={step === 'pulls'} icon={<GitPullRequest className="w-4 h-4" />} label="Pull Requests" onClick={() => goToStep('pulls')} />
 
           <div className="mt-8 px-3 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wider">Account</div>
-          <NavItem active={step === 'billing'} icon={<Zap className="w-4 h-4" />} label="Billing" onClick={() => goToStep('billing')} />
+          <NavItem active={step === 'billing'} icon={<Zap className="w-4 h-4" />} label="Billing" onClick={() => setLocation('/pricing')} />
           <NavItem active={step === 'settings'} icon={<Eye className="w-4 h-4" />} label="Settings" onClick={() => goToStep('settings')} />
 
-          {authStatus?.user?.plan === 'starter' && (
+          {authStatus?.user && (
             <div className="mt-8 p-3 bg-indigo-50/50 rounded-xl border border-indigo-100 mx-3">
-              <div className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider mb-2">Plan: Starter</div>
-              <UsageCounter label="Audits" used={authStatus.user.auditsUsed} limit={3} />
-              <UsageCounter label="PR Actions" used={authStatus.user.pullRequestsUsed} limit={5} className="mt-3" />
+              <div className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider mb-2">Plan: {authStatus.user.plan}</div>
+              <UsageCounter
+                label="Audits"
+                used={authStatus.user.auditsUsed}
+                limit={authStatus.user.plan === 'starter' ? 5 : (authStatus.user.plan === 'pro' ? 100 : Infinity)}
+              />
+              <UsageCounter
+                label="PR Actions"
+                used={authStatus.user.pullRequestsUsed}
+                limit={authStatus.user.plan === 'starter' ? 2 : (authStatus.user.plan === 'pro' ? 100 : Infinity)}
+                className="mt-3"
+              />
             </div>
           )}
         </div>
@@ -150,9 +164,12 @@ export default function Dashboard() {
                 isLoading={isLoadingRepos}
                 authStatus={authStatus}
                 onSelect={(repo) => {
-                  const isLimitReached = (authStatus?.user?.auditsUsed || 0) >= 3;
+                  const plan = authStatus?.user?.plan || 'starter';
+                  const limit = plan === 'starter' ? 5 : (plan === 'pro' ? 100 : Infinity);
+                  const isLimitReached = (authStatus?.user?.auditsUsed || 0) >= limit;
+
                   if (isLimitReached) {
-                    alert("Audit limit reached for Starter plan. Please upgrade to Pro for more audits.");
+                    setShowLimitModal({ show: true, type: 'audit' });
                     return;
                   }
                   setSelectedRepo(repo);
@@ -188,6 +205,7 @@ export default function Dashboard() {
                 pr={selectedPR}
                 onBack={() => setStep('pulls')}
                 authStatus={authStatus}
+                setShowLimitModal={setShowLimitModal}
                 onReviewComplete={(issues) => {
                   setPrIssues(issues);
                   setStep('pull_results');
@@ -210,9 +228,18 @@ export default function Dashboard() {
                 authStatus={authStatus}
               />
             )}
-            {step === 'billing' && <BillingView key="billing" />}
             {step === 'settings' && <SettingsView key="settings" user={authStatus?.user} />}
           </AnimatePresence>
+
+          <LimitReachedModal
+            isOpen={showLimitModal.show}
+            onClose={() => setShowLimitModal({ ...showLimitModal, show: false })}
+            type={showLimitModal.type}
+            onUpgrade={() => {
+              setShowLimitModal({ ...showLimitModal, show: false });
+              setLocation('/pricing');
+            }}
+          />
         </div>
       </main>
     </div>
@@ -280,8 +307,7 @@ function RepoSelection({ repos, isLoading, authStatus, onSelect }: { repos: any[
                 <Button
                   size="sm"
                   variant="ghost"
-                  className={`${(authStatus?.user?.auditsUsed || 0) >= 3 ? 'text-slate-400' : 'text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50'} -mr-2`}
-                  disabled={(authStatus?.user?.auditsUsed || 0) >= 3}
+                  className="text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 -mr-2"
                 >
                   Run Audit <ArrowRight className="w-4 h-4 ml-1" />
                 </Button>
@@ -884,7 +910,7 @@ function PullsView({ onSelect }: { onSelect: (pr: any) => void }) {
 // ------------------------------------------------------------------
 // STEP 8: PR DETAIL VIEW
 // ------------------------------------------------------------------
-function PullDetailView({ pr, onBack, onReviewComplete, authStatus }: { pr: any, onBack: () => void, onReviewComplete: (issues: any[]) => void, authStatus: any }) {
+function PullDetailView({ pr, onBack, onReviewComplete, authStatus, setShowLimitModal }: { pr: any, onBack: () => void, onReviewComplete: (issues: any[]) => void, authStatus: any, setShowLimitModal: any }) {
   const repoOwner = pr.repo?.owner?.login || pr.repo?.owner || pr.owner?.login || pr.owner;
   const repoName = pr.repo?.name || pr.name;
 
@@ -896,8 +922,12 @@ function PullDetailView({ pr, onBack, onReviewComplete, authStatus }: { pr: any,
   const [targetBranch, setTargetBranch] = useState(pr.base?.ref || 'master');
 
   const handleAudit = () => {
-    if (authStatus?.user?.pullRequestsUsed >= 5) {
-      alert("PR action limit reached. Please upgrade to Pro.");
+    if (authStatus?.user?.plan === 'starter' && authStatus?.user?.pullRequestsUsed >= 2) {
+      setShowLimitModal({ show: true, type: 'pr' });
+      return;
+    }
+    if (authStatus?.user?.plan === 'pro' && authStatus?.user?.pullRequestsUsed >= 100) {
+      setShowLimitModal({ show: true, type: 'pr' });
       return;
     }
     auditMutation.mutate({ owner: repoOwner, repo: repoName, number: pr.number }, {
@@ -908,8 +938,12 @@ function PullDetailView({ pr, onBack, onReviewComplete, authStatus }: { pr: any,
   };
 
   const handleMerge = () => {
-    if (authStatus?.user?.pullRequestsUsed >= 5) {
-      alert("PR action limit reached. Please upgrade to Pro.");
+    if (authStatus?.user?.plan === 'starter' && authStatus?.user?.pullRequestsUsed >= 2) {
+      setShowLimitModal({ show: true, type: 'pr' });
+      return;
+    }
+    if (authStatus?.user?.plan === 'pro' && authStatus?.user?.pullRequestsUsed >= 100) {
+      setShowLimitModal({ show: true, type: 'pr' });
       return;
     }
     mergeMutation.mutate({ owner: repoOwner, repo: repoName, number: pr.number }, {
@@ -989,11 +1023,11 @@ function PullDetailView({ pr, onBack, onReviewComplete, authStatus }: { pr: any,
             <CardContent>
               <Button
                 onClick={handleAudit}
-                disabled={auditMutation.isPending || authStatus?.user?.pullRequestsUsed >= 5}
+                disabled={auditMutation.isPending || ((authStatus?.user?.plan === 'starter' && authStatus?.user?.pullRequestsUsed >= 2) || (authStatus?.user?.plan === 'pro' && authStatus?.user?.pullRequestsUsed >= 100))}
                 className="w-full bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-200"
               >
                 {auditMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Zap className="w-4 h-4 mr-2" />}
-                {authStatus?.user?.pullRequestsUsed >= 5 ? "Limit Reached" : "Review with AI"}
+                {((authStatus?.user?.plan === 'starter' && authStatus?.user?.pullRequestsUsed >= 2) || (authStatus?.user?.plan === 'pro' && authStatus?.user?.pullRequestsUsed >= 100)) ? "Limit Reached" : "Review with AI"}
               </Button>
             </CardContent>
           </Card>
@@ -1019,11 +1053,11 @@ function PullDetailView({ pr, onBack, onReviewComplete, authStatus }: { pr: any,
               <div className="pt-2 space-y-3">
                 <Button
                   onClick={handleMerge}
-                  disabled={mergeMutation.isPending || updatePRMutation.isPending || authStatus?.user?.pullRequestsUsed >= 5}
+                  disabled={mergeMutation.isPending || updatePRMutation.isPending || ((authStatus?.user?.plan === 'starter' && authStatus?.user?.pullRequestsUsed >= 2) || (authStatus?.user?.plan === 'pro' && authStatus?.user?.pullRequestsUsed >= 100))}
                   className="w-full bg-[#2da44e] hover:bg-[#2c974b] text-white"
                 >
                   <GitPullRequest className="w-4 h-4 mr-2" />
-                  {authStatus?.user?.pullRequestsUsed >= 5 ? "Limit Reached" : `Merge into ${targetBranch}`}
+                  {((authStatus?.user?.plan === 'starter' && authStatus?.user?.pullRequestsUsed >= 2) || (authStatus?.user?.plan === 'pro' && authStatus?.user?.pullRequestsUsed >= 100)) ? "Limit Reached" : `Merge into ${targetBranch}`}
                 </Button>
                 <Button variant="outline" className="w-full border-slate-200 text-slate-600" asChild>
                   <a href={pr.html_url} target="_blank" rel="noopener noreferrer">
@@ -1219,98 +1253,6 @@ function PRDiffView({ pr, onBack, authStatus }: { pr: any, onBack: () => void, a
   );
 }
 
-// ------------------------------------------------------------------
-// STEP 11: BILLING VIEW
-// ------------------------------------------------------------------
-function BillingView() {
-  const plans = [
-    {
-      name: "Starter",
-      price: "$49",
-      description: "For individuals and small side projects.",
-      features: ["5 Repositories", "Basic AI Audit", "Community Support", "Weekly Scans"],
-      buttonText: "Current Plan",
-      highlight: false
-    },
-    {
-      name: "Pro",
-      price: "$149",
-      description: "For professional developers and growing teams.",
-      features: ["Unlimited Repositories", "Advanced AI Insights", "Priority Support", "Real-time PR Audits", "Custom Fix Suggestions"],
-      buttonText: "Upgrade to Pro",
-      highlight: true
-    },
-    {
-      name: "Agency",
-      price: "$399",
-      description: "For large organizations with complex needs.",
-      features: ["SSO & SAML Auth", "On-premise AI Model", "Dedicated Success Manager", "Custom Security Policies"],
-      buttonText: "Contact Sales",
-      highlight: false
-    }
-  ];
-
-  return (
-    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-10">
-      <div className="text-center space-y-2">
-        <h2 className="text-3xl font-bold text-slate-900">Choose the perfect plan</h2>
-        <p className="text-slate-500">Protect your codebase with AI-powered security and performance audits.</p>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-        {plans.map((plan) => (
-          <Card key={plan.name} className={`relative flex flex-col border-slate-200 transition-all hover:shadow-xl ${plan.highlight ? 'ring-2 ring-indigo-600 scale-105 shadow-indigo-100 z-10' : ''}`}>
-            {plan.highlight && (
-              <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-indigo-600 text-white text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-widest shadow-lg">
-                Most Popular
-              </div>
-            )}
-            <CardHeader className="text-center pt-8">
-              <CardTitle className="text-xl font-bold">{plan.name}</CardTitle>
-              <div className="text-4xl font-extrabold text-slate-900 mt-4">
-                {plan.price}<span className="text-sm font-medium text-slate-500">{plan.price !== 'Custom' && '/mo'}</span>
-              </div>
-              <CardDescription className="mt-2 text-sm">{plan.description}</CardDescription>
-            </CardHeader>
-            <CardContent className="flex-1 pt-6">
-              <ul className="space-y-3">
-                {plan.features.map((feature) => (
-                  <li key={feature} className="flex items-start gap-2 text-sm text-slate-600">
-                    <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0 mt-0.5" />
-                    {feature}
-                  </li>
-                ))}
-              </ul>
-            </CardContent>
-            <CardFooter className="pb-8">
-              <Button
-                variant={plan.highlight ? "default" : "outline"}
-                className={`w-full h-11 transition-all ${plan.highlight ? 'bg-indigo-600 hover:bg-indigo-700 shadow-md shadow-indigo-200 border-none' : ''}`}
-                disabled={plan.name === 'Free'}
-              >
-                {plan.buttonText}
-              </Button>
-            </CardFooter>
-          </Card>
-        ))}
-      </div>
-
-      <div className="max-w-3xl mx-auto rounded-2xl bg-slate-900 p-8 flex flex-col md:flex-row items-center gap-8 justify-between">
-        <div>
-          <h3 className="text-white font-bold text-lg">Looking for an open-source discount?</h3>
-          <p className="text-slate-400 text-sm mt-1">We offer free Pro accounts for eligible open-source projects.</p>
-        </div>
-        <Button variant="outline" className="text-white border-slate-700 hover:bg-slate-800 shrink-0">
-          Apply Now
-        </Button>
-      </div>
-    </motion.div>
-  );
-}
-
-// ------------------------------------------------------------------
-// STEP 12: SETTINGS VIEW
-// ------------------------------------------------------------------
 function SettingsView({ user }: { user: any }) {
   return (
     <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-8">
@@ -1383,6 +1325,36 @@ function SettingsView({ user }: { user: any }) {
         </div>
       </div>
     </motion.div>
+  );
+}
+
+function LimitReachedModal({ isOpen, onClose, type, onUpgrade }: { isOpen: boolean, onClose: () => void, type: 'audit' | 'pr', onUpgrade: () => void }) {
+  return (
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="sm:max-w-md bg-white border-indigo-100">
+        <DialogHeader className="pt-4 flex flex-col items-center text-center">
+          <div className="w-16 h-16 bg-amber-50 rounded-full flex items-center justify-center mb-4">
+            <Zap className="w-8 h-8 text-amber-500 fill-current" />
+          </div>
+          <DialogTitle className="text-2xl font-bold text-slate-900">
+            {type === 'audit' ? 'Audit Limit Reached' : 'PR Review Limit Reached'}
+          </DialogTitle>
+          <DialogDescription className="text-slate-500 mt-2">
+            {type === 'audit'
+              ? "You've used all the audits included in your current plan. Upgrade to a higher tier to continue scanning your repositories for vulnerabilities."
+              : "You've reached your monthly limit for PR AI reviews. Upgrade to Pro for 100 reviews per month and unlock advanced features."}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-3 py-6">
+          <Button onClick={onUpgrade} className="w-full bg-indigo-600 hover:bg-indigo-700 h-12 text-white font-bold shadow-lg shadow-indigo-200">
+            View Pricing & Upgrade
+          </Button>
+          <Button variant="ghost" onClick={onClose} className="text-slate-400">
+            Maybe Later
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

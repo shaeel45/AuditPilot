@@ -5,6 +5,7 @@ import OpenAI from "openai";
 import { User } from "./models/User";
 import type { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
+import { stripe, STRIPE_PRICE_IDS, LIMITS, PLANS } from "./lib/stripe";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -276,11 +277,13 @@ export async function registerRoutes(
     const { owner, repo } = req.params;
     const user = (req as any).user;
 
-    // Plan Enforcement: Starter limit 3 audits
-    if (user && user.plan === 'starter' && user.auditsUsed >= 3) {
+    // Plan Enforcement
+    const plan = user?.plan || PLANS.STARTER;
+    const limit = LIMITS[plan].audits;
+    if (user && user.auditsUsed >= limit) {
       return res.status(402).json({
-        message: "Audit limit reached for Starter plan.",
-        details: "You have used all 3 audits included in your plan. Upgrade for unlimited scans."
+        message: `${plan.charAt(0).toUpperCase() + plan.slice(1)} limit reached.`,
+        details: `You have used all ${limit} audits included in your plan. Upgrade for more scans.`
       });
     }
 
@@ -447,7 +450,7 @@ export async function registerRoutes(
       }
 
       // 8. Update usage
-      if (user && user.plan === 'starter') {
+      if (user) {
         await User.findByIdAndUpdate(user._id, { $inc: { auditsUsed: 1 } });
       }
 
@@ -781,11 +784,13 @@ export async function registerRoutes(
     const { owner, repo, number } = req.params;
     const user = (req as any).user;
 
-    // Plan Enforcement: Starter limit 5 PR actions
-    if (user && user.plan === 'starter' && user.pullRequestsUsed >= 5) {
+    // Plan Enforcement
+    const plan = user?.plan || PLANS.STARTER;
+    const limit = LIMITS[plan].pullRequests;
+    if (user && user.pullRequestsUsed >= limit) {
       return res.status(402).json({
-        message: "PR review limit reached for Starter plan.",
-        details: "You have used all 5 PR actions included in your plan. Upgrade for more reviews."
+        message: `${plan.charAt(0).toUpperCase() + plan.slice(1)} PR review limit reached.`,
+        details: `You have used all ${limit} PR actions included in your plan. Upgrade for more reviews.`
       });
     }
 
@@ -899,11 +904,13 @@ export async function registerRoutes(
     const { owner, repo, number } = req.params;
     const user = (req as any).user;
 
-    // Plan Enforcement: Starter limit 5 PR actions
-    if (user && user.plan === 'starter' && user.pullRequestsUsed >= 5) {
+    // Plan Enforcement
+    const plan = user?.plan || PLANS.STARTER;
+    const limit = LIMITS[plan].pullRequests;
+    if (user && user.pullRequestsUsed >= limit) {
       return res.status(402).json({
-        message: "PR merge limit reached for Starter plan.",
-        details: "You have used all 5 PR actions included in your plan. Upgrade for unlimited merges."
+        message: `${plan.charAt(0).toUpperCase() + plan.slice(1)} PR merge limit reached.`,
+        details: `You have used all ${limit} PR actions included in your plan. Upgrade for unlimited merges.`
       });
     }
 
@@ -927,7 +934,7 @@ export async function registerRoutes(
       }
 
       // Update usage
-      if (user && user.plan === 'starter') {
+      if (user) {
         await User.findByIdAndUpdate(user._id, { $inc: { pullRequestsUsed: 1 } });
       }
 
@@ -964,6 +971,114 @@ export async function registerRoutes(
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
+  });
+
+  // === Billing Routes ===
+
+  app.post("/api/billing/create-checkout-session", requireAuth, async (req, res) => {
+    const { plan } = req.body;
+    const user = (req as any).user;
+
+    if (!plan || !STRIPE_PRICE_IDS[plan]) {
+      return res.status(400).json({ message: "Invalid plan selected" });
+    }
+
+    try {
+      if (!process.env.STRIPE_SECRET_KEY || process.env.STRIPE_SECRET_KEY === 'sk_test_placeholder') {
+        throw new Error("Stripe Secret Key is not configured correctly in .env");
+      }
+
+      // 1. Ensure user has a Stripe Customer ID
+      let stripeCustomerId = user.stripeCustomerId;
+      if (!stripeCustomerId) {
+        const customer = await stripe.customers.create({
+          email: user.email,
+          name: user.displayName || user.username,
+          metadata: { userId: user._id.toString() }
+        });
+        stripeCustomerId = customer.id;
+        await User.findByIdAndUpdate(user._id, { stripeCustomerId });
+      }
+
+      // 2. Create Checkout Session
+      const session = await stripe.checkout.sessions.create({
+        customer: stripeCustomerId,
+        payment_method_types: ['card'],
+        line_items: [
+          {
+            price: STRIPE_PRICE_IDS[plan],
+            quantity: 1,
+          },
+        ],
+        mode: 'subscription',
+        success_url: `${req.protocol}://${req.get('host')}/app?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${req.protocol}://${req.get('host')}/app?billing=true`,
+        metadata: {
+          userId: user._id.toString(),
+          plan: plan
+        }
+      });
+
+      res.json({ url: session.url });
+    } catch (error: any) {
+      console.error("Stripe Session Error:", error);
+      res.status(500).json({ 
+        message: "Failed to create checkout session", 
+        details: error.message 
+      });
+    }
+  });
+
+  app.post("/api/billing/webhook", async (req: any, res) => {
+    const sig = req.headers['stripe-signature'];
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+    let event;
+
+    try {
+      if (webhookSecret) {
+        event = stripe.webhooks.constructEvent(req.rawBody as any, sig as string, webhookSecret);
+      } else {
+        event = req.body;
+      }
+    } catch (err: any) {
+      console.error(`Webhook Error: ${err.message}`);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+
+    // Handle the event
+    switch (event.type) {
+      case 'checkout.session.completed': {
+        const session = event.data.object;
+        const userId = session.metadata.userId;
+        const plan = session.metadata.plan;
+        const subscriptionId = session.subscription;
+
+        if (userId && plan) {
+          await User.findByIdAndUpdate(userId, {
+            plan: plan,
+            stripeSubscriptionId: subscriptionId
+          });
+          console.log(`User ${userId} upgraded to ${plan}`);
+        }
+        break;
+      }
+      case 'customer.subscription.deleted': {
+        const subscription = event.data.object;
+        const customerId = subscription.customer;
+        
+        await User.findOneAndUpdate(
+          { stripeCustomerId: customerId },
+          { plan: PLANS.STARTER, stripeSubscriptionId: null }
+        );
+        console.log(`Subscription deleted for customer ${customerId}, reverted to starter`);
+        break;
+      }
+      default:
+        console.log(`Unhandled event type ${event.type}`);
+    }
+
+    res.json({ received: true });
   });
 
   return httpServer;
