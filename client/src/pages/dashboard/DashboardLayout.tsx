@@ -28,43 +28,43 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       {/* Sidebar */}
       <aside className="w-64 bg-white border-r border-slate-200 hidden md:flex flex-col fixed inset-y-0">
         <div className="h-16 flex items-center px-6 border-b border-slate-100">
-          <div className="w-6 h-6 rounded bg-gradient-to-br from-indigo-600 to-violet-600 flex items-center justify-center text-white text-xs font-bold mr-2">A</div>
-          <span className="font-bold text-slate-800">AuditPilot</span>
+          <img src="/logo.png" alt="AuditPilot Logo" className="w-10 h-10 rounded-lg object-contain" />
+          <span className="font-bold text-xl tracking-tight text-slate-900 transition-colors hover:text-indigo-600">AuditPilot</span>
         </div>
 
         <div className="p-4 space-y-1">
           <div className="px-3 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wider">Platform</div>
-          <NavItem 
-            active={location === '/app/repos' || location === '/app'} 
-            icon={<Code2 className="w-4 h-4" />} 
-            label="Repositories" 
-            onClick={() => setLocation('/app/repos')} 
+          <NavItem
+            active={location === '/app/repos' || location === '/app'}
+            icon={<Code2 className="w-4 h-4" />}
+            label="Repositories"
+            onClick={() => setLocation('/app/repos')}
           />
-          <NavItem 
-            active={location === '/app/history'} 
-            icon={<Shield className="w-4 h-4" />} 
-            label="Audits" 
-            onClick={() => setLocation('/app/history')} 
+          <NavItem
+            active={location === '/app/history'}
+            icon={<Shield className="w-4 h-4" />}
+            label="Audits"
+            onClick={() => setLocation('/app/history')}
           />
-          <NavItem 
-            active={location === '/app/pulls'} 
-            icon={<GitPullRequest className="w-4 h-4" />} 
-            label="Pull Requests" 
-            onClick={() => setLocation('/app/pulls')} 
+          <NavItem
+            active={location === '/app/pulls'}
+            icon={<GitPullRequest className="w-4 h-4" />}
+            label="Pull Requests"
+            onClick={() => setLocation('/app/pulls')}
           />
 
           <div className="mt-8 px-3 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wider">Account</div>
-          <NavItem 
-            active={false} 
-            icon={<Zap className="w-4 h-4" />} 
-            label="Billing" 
-            onClick={() => setLocation('/pricing')} 
+          <NavItem
+            active={false}
+            icon={<Zap className="w-4 h-4" />}
+            label="Billing"
+            onClick={() => setLocation('/pricing')}
           />
-          <NavItem 
-            active={location === '/app/settings'} 
-            icon={<Eye className="w-4 h-4" />} 
-            label="Settings" 
-            onClick={() => setLocation('/app/settings')} 
+          <NavItem
+            active={location === '/app/settings'}
+            icon={<Eye className="w-4 h-4" />}
+            label="Settings"
+            onClick={() => setLocation('/app/settings')}
           />
 
           {authStatus?.user && (

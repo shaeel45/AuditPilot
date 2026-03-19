@@ -149,8 +149,16 @@ export default function Landing() {
 
       {/* Footer */}
       <footer className="py-12 border-t border-slate-100 bg-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center text-slate-500 text-sm">
-          <p>© 2024 AuditPilot Inc.</p>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row justify-between items-center gap-8 text-slate-500 text-sm font-medium">
+          <div className="flex items-center gap-3">
+             <img src="/logo.png" alt="AuditPilot Logo" className="w-8 h-8 rounded object-contain" />
+             <span>© 2024 AuditPilot Inc.</span>
+          </div>
+          <div className="flex gap-8">
+            <Link href="/" className="hover:text-indigo-600 transition-colors">Home</Link>
+            <Link href="/how-it-works" className="hover:text-indigo-600 transition-colors">How it Works</Link>
+            <Link href="/pricing" className="hover:text-indigo-600 transition-colors">Pricing</Link>
+          </div>
           <div className="flex gap-6">
             <a href="#" className="hover:text-indigo-600">Privacy</a>
             <a href="#" className="hover:text-indigo-600">Terms</a>

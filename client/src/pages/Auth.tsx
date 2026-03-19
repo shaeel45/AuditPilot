@@ -17,8 +17,8 @@ export default function Auth() {
     <div className="min-h-screen bg-mesh-light flex items-center justify-center p-4">
       <Card className="w-full max-w-md border-0 shadow-2xl shadow-indigo-500/10 bg-white/80 backdrop-blur-xl">
         <CardHeader className="text-center pb-2">
-          <div className="mx-auto w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-600 to-violet-600 flex items-center justify-center text-white font-bold text-2xl mb-6 shadow-lg shadow-indigo-500/30">
-            A
+          <div className="mx-auto w-16 h-16 rounded-xl overflow-hidden mb-6 shadow-lg shadow-indigo-500/30 bg-white p-1">
+            <img src="/logo.png" alt="AuditPilot Logo" className="w-full h-full object-contain" />
           </div>
           <CardTitle className="text-2xl font-bold tracking-tight">Welcome to AuditPilot</CardTitle>
           <CardDescription className="text-base text-slate-500 mt-2">

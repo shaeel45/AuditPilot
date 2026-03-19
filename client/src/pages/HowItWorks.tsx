@@ -171,7 +171,7 @@ export default function HowItWorks() {
       <footer className="py-12 border-t border-slate-200 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row justify-between items-center gap-8 text-slate-500 text-sm font-medium">
           <div className="flex items-center gap-3">
-             <div className="w-6 h-6 rounded bg-slate-100 flex items-center justify-center font-bold text-xs text-slate-900">A</div>
+             <img src="/logo.png" alt="AuditPilot Logo" className="w-8 h-8 rounded object-contain" />
              <span>© 2024 AuditPilot Inc.</span>
           </div>
           <div className="flex gap-8">

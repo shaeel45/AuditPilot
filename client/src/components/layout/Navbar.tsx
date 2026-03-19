@@ -9,9 +9,7 @@ export default function Navbar() {
         <div className="flex justify-between h-16 items-center">
           <Link href="/">
             <div className="flex-shrink-0 flex items-center gap-2 cursor-pointer">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-600 to-violet-600 flex items-center justify-center text-white font-bold shadow-sm">
-                A
-              </div>
+              <img src="/logo.png" alt="AuditPilot Logo" className="w-10 h-10 rounded-lg object-contain" />
               <span className="font-bold text-xl tracking-tight text-slate-900 transition-colors hover:text-indigo-600">AuditPilot</span>
             </div>
           </Link>
