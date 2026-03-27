@@ -1,0 +1,1 @@
+{\n  "name": "shared-types-utils",\n  "version": "1.0.0",\n  "description": "Shared TypeScript types and utilities",\n  "main": "index.js",\n  "types": "index.d.ts",\n  "scripts": {\n    "build": "tsc",\n    "test": "jest"\n  },\n  "devDependencies": {\n    "typescript": "^4.0.0",\n    "jest": "^26.0.0"\n  }\n}
