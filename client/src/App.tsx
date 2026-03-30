@@ -68,8 +68,14 @@ function App() {
   }
 
   useEffect(() => {
-    // Only clean URL in useEffect
     if (token) {
+      // Set intermediate flag to help with redirects
+      localStorage.setItem("authenticated", "true");
+      
+      // Invalidate the auth-status query to force a refresh with the new token
+      queryClient.invalidateQueries({ queryKey: ["auth-status"] });
+      
+      // Clean URL
       const newUrl = window.location.pathname;
       window.history.replaceState({}, document.title, newUrl);
     }

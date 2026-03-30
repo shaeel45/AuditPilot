@@ -10,7 +10,7 @@ const getAuthHeader = () => ({
 export const api = {
   // Auth & User
   async getAuthStatus() {
-    const res = await fetch("/api/auth/status", { headers: getAuthHeader() });
+    const res = await fetch("/api/auth/user", { headers: getAuthHeader() });
     if (!res.ok) throw new Error("Auth verify failed");
     return res.json();
   },
