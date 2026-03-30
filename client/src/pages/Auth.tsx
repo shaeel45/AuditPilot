@@ -1,12 +1,26 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Github, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
+import { useAuthStatus } from "@/hooks/use-repos";
 
 export default function Auth() {
   const [isLoading, setIsLoading] = useState(false);
+  const { data: authStatus, isLoading: isAuthLoading } = useAuthStatus();
   const [, setLocation] = useLocation();
+
+  useEffect(() => {
+    // Immediate redirect based on localStorage
+    if (localStorage.getItem("authenticated") === "true") {
+      setLocation("/app");
+      return;
+    }
+
+    if (!isAuthLoading && authStatus?.authenticated) {
+      setLocation("/app");
+    }
+  }, [authStatus, isAuthLoading, setLocation]);
 
   const handleLogin = () => {
     setIsLoading(true);

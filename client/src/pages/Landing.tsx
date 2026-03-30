@@ -27,6 +27,13 @@ export default function Landing() {
   };
 
   useEffect(() => {
+    // Check localStorage for immediate redirect to avoid flicker
+    const isAuthenticated = localStorage.getItem("authenticated") === "true";
+    if (isAuthenticated) {
+      setLocation("/app");
+      return;
+    }
+
     if (!isLoading && authStatus?.authenticated) {
       setLocation("/app");
     }

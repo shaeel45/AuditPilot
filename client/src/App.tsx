@@ -26,6 +26,7 @@ import AuditSuccessPage from "@/pages/dashboard/audit/AuditSuccessPage";
 import PullDetailPage from "@/pages/dashboard/pulls/PullDetailPage";
 import PullResultsPage from "@/pages/dashboard/pulls/PullResultsPage";
 import PullDiffPage from "@/pages/dashboard/pulls/PullDiffPage";
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 
 function Router() {
   return (
@@ -36,22 +37,22 @@ function Router() {
       <Route path="/how-it-works" component={HowItWorks} />
 
       {/* Dashboard Routes */}
-      <Route path="/app" component={ReposPage} />
-      <Route path="/app/repos" component={ReposPage} />
-      <Route path="/app/history" component={AuditHistoryPage} />
-      <Route path="/app/pulls" component={PullsPage} />
-      <Route path="/app/settings" component={SettingsPage} />
+      <ProtectedRoute path="/app" component={ReposPage} />
+      <ProtectedRoute path="/app/repos" component={ReposPage} />
+      <ProtectedRoute path="/app/history" component={AuditHistoryPage} />
+      <ProtectedRoute path="/app/pulls" component={PullsPage} />
+      <ProtectedRoute path="/app/settings" component={SettingsPage} />
 
       {/* Audit Flow Routes */}
-      <Route path="/app/audit/:owner/:repo" component={AuditProgressPage} />
-      <Route path="/app/audit/:owner/:repo/results/:auditId" component={AuditResultsPage} />
-      <Route path="/app/audit/:owner/:repo/fix/:auditId" component={FixConfirmationPage} />
-      <Route path="/app/audit/:owner/:repo/success/:prNumber" component={AuditSuccessPage} />
+      <ProtectedRoute path="/app/audit/:owner/:repo" component={AuditProgressPage} />
+      <ProtectedRoute path="/app/audit/:owner/:repo/results/:auditId" component={AuditResultsPage} />
+      <ProtectedRoute path="/app/audit/:owner/:repo/fix/:auditId" component={FixConfirmationPage} />
+      <ProtectedRoute path="/app/audit/:owner/:repo/success/:prNumber" component={AuditSuccessPage} />
 
       {/* Pull Requests Flow Routes */}
-      <Route path="/app/pulls/:number" component={PullDetailPage} />
-      <Route path="/app/pulls/:number/results" component={PullResultsPage} />
-      <Route path="/app/pulls/:number/diff" component={PullDiffPage} />
+      <ProtectedRoute path="/app/pulls/:number" component={PullDetailPage} />
+      <ProtectedRoute path="/app/pulls/:number/results" component={PullResultsPage} />
+      <ProtectedRoute path="/app/pulls/:number/diff" component={PullDiffPage} />
 
       <Route component={NotFound} />
     </Switch>
