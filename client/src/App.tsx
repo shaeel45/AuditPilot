@@ -19,6 +19,7 @@ import SettingsPage from "@/pages/dashboard/SettingsPage";
 // Audit Flow
 import AuditProgressPage from "@/pages/dashboard/audit/AuditProgressPage";
 import AuditResultsPage from "@/pages/dashboard/audit/AuditResultsPage";
+import AuditEditPage from "@/pages/dashboard/audit/AuditEditPage";
 import FixConfirmationPage from "@/pages/dashboard/audit/FixConfirmationPage";
 import AuditSuccessPage from "@/pages/dashboard/audit/AuditSuccessPage";
 
@@ -44,8 +45,9 @@ function Router() {
       <ProtectedRoute path="/app/settings" component={SettingsPage} />
 
       {/* Audit Flow Routes */}
-      <ProtectedRoute path="/app/audit/:owner/:repo" component={AuditProgressPage} />
+      <ProtectedRoute path="/app/audit/:owner/:repo/:branch" component={AuditProgressPage} />
       <ProtectedRoute path="/app/audit/:owner/:repo/results/:auditId" component={AuditResultsPage} />
+      <ProtectedRoute path="/app/audit/:owner/:repo/edit/:auditId" component={AuditEditPage} />
       <ProtectedRoute path="/app/audit/:owner/:repo/fix/:auditId" component={FixConfirmationPage} />
       <ProtectedRoute path="/app/audit/:owner/:repo/success/:prNumber" component={AuditSuccessPage} />
 

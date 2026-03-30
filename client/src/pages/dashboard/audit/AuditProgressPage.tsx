@@ -7,7 +7,7 @@ import { useLocation, useParams } from "wouter";
 import DashboardLayout from "../DashboardLayout";
 
 export default function AuditProgressPage() {
-  const { owner, repo } = useParams<{ owner: string, repo: string }>();
+  const { owner = "", repo = "", branch = "" } = useParams<{ owner: string, repo: string, branch: string }>();
   const [progress, setProgress] = useState(0);
   const [stage, setStage] = useState(0);
   const [, setLocation] = useLocation();
@@ -21,15 +21,15 @@ export default function AuditProgressPage() {
   ];
 
   useEffect(() => {
-    if (owner && repo) {
-      auditMutation.mutate({ owner, repo }, {
+    if (owner && repo && branch) {
+      auditMutation.mutate({ owner, repo, branch }, {
         onSuccess: (data) => {
           // data.audit contains the new audit ID
           setLocation(`/app/audit/${owner}/${repo}/results/${data.audit._id}`);
         }
       });
     }
-  }, [owner, repo]);
+  }, [owner, repo, branch]);
 
   useEffect(() => {
     const interval = setInterval(() => {

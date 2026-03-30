@@ -275,6 +275,7 @@ export async function registerRoutes(
     const token = (req as any).githubAccessToken;
 
     const { owner, repo } = req.params;
+    const { branch: requestedBranch } = req.body;
     const user = (req as any).user;
 
     // Plan Enforcement
@@ -288,24 +289,22 @@ export async function registerRoutes(
     }
 
     try {
-      // 1. Get the latest commit SHA to use the Trees API
-      const repoInfoResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
-        headers: {
-          Authorization: `token ${token}`,
-          Accept: "application/vnd.github.v3+json",
-          "User-Agent": "Audit-Pilot-App"
-        },
-      });
-
-      if (!repoInfoResponse.ok) {
-        return res.status(repoInfoResponse.status).json({ message: `Failed to fetch repo info: ${repoInfoResponse.statusText}` });
+      // 1. Determine target branch
+      let targetBranch = requestedBranch;
+      if (!targetBranch) {
+        const repoInfoResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+          headers: {
+            Authorization: `token ${token}`,
+            Accept: "application/vnd.github.v3+json",
+            "User-Agent": "Audit-Pilot-App"
+          },
+        });
+        const repoInfo = await repoInfoResponse.json();
+        targetBranch = repoInfo.default_branch || 'main';
       }
 
-      const repoInfo = await repoInfoResponse.json();
-      const defaultBranch = repoInfo.default_branch || 'main';
-
-      // 2. Use Trees API to find all files (recursive)
-      const treeResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/${defaultBranch}?recursive=1`, {
+      // 2. Use Trees API to find all files (recursive) on the selected branch
+      const treeResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/${targetBranch}?recursive=1`, {
         headers: {
           Authorization: `token ${token}`,
           Accept: "application/vnd.github.v3+json",
@@ -433,6 +432,7 @@ export async function registerRoutes(
         status: "completed",
         priority: issues.some((i: any) => i.severity === "critical") ? "critical" : "medium",
         scope: "Global Repository Scan",
+        branch: targetBranch,
       });
 
       // 7. Save Audit Items
@@ -600,7 +600,7 @@ export async function registerRoutes(
         },
         body: JSON.stringify({
           title: `AuditPilot: Fix security and performance issues`,
-          body: `This PR applies automated fixes for issues identified during the AI audit.\n\nIssues fixed:\n${issues.map((i: any) => `- ${i.description}`).join('\n')}`,
+          body: `This PR applies automated fixes for issues identified during the AI audit.\n\nIssues fixed:\n${issues.map((i: any) => `- ${i.label || i.description || "Issue Detected"}`).join('\n')}`,
           head: newBranchName,
           base: targetBranch,
         }),
@@ -1080,7 +1080,7 @@ export async function registerRoutes(
     // Handle the event
     switch (event.type) {
       case 'checkout.session.completed': {
-        const session = event.data.object;
+        const session = event.data.object as any;
         const userId = session.metadata.userId;
         const plan = session.metadata.plan;
         const subscriptionId = session.subscription;
@@ -1095,7 +1095,7 @@ export async function registerRoutes(
         break;
       }
       case 'customer.subscription.deleted': {
-        const subscription = event.data.object;
+        const subscription = event.data.object as any;
         const customerId = subscription.customer;
         
         await User.findOneAndUpdate(

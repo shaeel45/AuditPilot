@@ -8,13 +8,27 @@ import { useRepos, useAuthStatus } from "@/hooks/use-repos";
 import { useLocation } from "wouter";
 import DashboardLayout from "./DashboardLayout";
 
+import { useState } from "react";
+import { BranchSelectModal } from "@/components/dashboard/BranchSelectModal";
+
 export default function ReposPage() {
   const { data: repos, isLoading: isLoadingRepos } = useRepos();
   const { data: authStatus } = useAuthStatus();
   const [, setLocation] = useLocation();
 
+  const [selectedRepo, setSelectedRepo] = useState<any>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
   const handleSelect = (repo: any) => {
-    setLocation(`/app/audit/${repo.owner.login}/${repo.name}`);
+    setSelectedRepo(repo);
+    setIsModalOpen(true);
+  };
+
+  const handleConfirmBranch = (branch: string) => {
+    if (selectedRepo) {
+      setLocation(`/app/audit/${selectedRepo.owner.login}/${selectedRepo.name}/${branch}`);
+    }
+    setIsModalOpen(false);
   };
 
   if (isLoadingRepos) {
@@ -75,6 +89,13 @@ export default function ReposPage() {
           </div>
         )}
       </motion.div>
+
+      <BranchSelectModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        repo={selectedRepo}
+        onConfirm={handleConfirmBranch}
+      />
     </DashboardLayout>
   );
 }

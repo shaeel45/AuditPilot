@@ -7,6 +7,7 @@ const auditSchema = new mongoose.Schema({
     priority: { type: String, default: "medium", enum: ["low", "medium", "high", "critical"] },
     auditorId: { type: String }, // Can be linked to a user later
     scope: { type: String },
+    branch: { type: String, default: "main" },
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
 });

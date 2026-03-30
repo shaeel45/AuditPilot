@@ -112,12 +112,12 @@ export default function AuditResultsPage() {
 
           <div className="pt-10 flex justify-center sticky bottom-8 z-30">
             <Button
-              onClick={() => setLocation(`/app/audit/${owner}/${repo}/fix/${auditId}`)}
+              onClick={() => setLocation(`/app/audit/${owner}/${repo}/edit/${auditId}`)}
               disabled={issues.length === 0}
               className="bg-indigo-600 hover:bg-indigo-700 text-white px-12 h-16 text-xl font-bold shadow-2xl shadow-indigo-200 group rounded-full border-4 border-white"
             >
               <Zap className="w-6 h-6 mr-3 fill-current" />
-              Auto-Fix with AI
+              Review & Edit Fixes
               <ArrowRight className="w-6 h-6 ml-3 group-hover:translate-x-1 transition-transform" />
             </Button>
           </div>

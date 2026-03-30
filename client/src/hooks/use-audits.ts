@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { InsertAudit, InsertAuditItem } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { api } from "@/lib/api-service";
 
 // Types for creating/updating
 type UpdateAuditParams = { id: string } & Partial<InsertAudit>;
@@ -9,21 +9,17 @@ type UpdateAuditItemParams = { id: string } & Partial<InsertAuditItem>;
 
 export function useAudits() {
     return useQuery({
-        queryKey: ["/api/audits"],
-        queryFn: async () => {
-            const res = await apiRequest("GET", "/api/audits");
-            return await res.json();
-        },
+        queryKey: ["audits"],
+        queryFn: () => api.getAudits(),
     });
 }
 
 export function useAudit(id: string) {
     return useQuery({
-        queryKey: ["/api/audits", id],
+        queryKey: ["audit", id],
         queryFn: async () => {
             try {
-                const res = await apiRequest("GET", `/api/audits/${id}`);
-                return await res.json();
+                return await api.getAuditDetails(id);
             } catch (err: any) {
                 if (err.message?.includes('404')) return null;
                 throw err;
@@ -38,16 +34,20 @@ export function useCreateAudit() {
     const { toast } = useToast();
 
     return useMutation({
-        mutationFn: async (data: InsertAudit) => {
-            const res = await apiRequest("POST", "/api/audits", data);
-            return await res.json();
+        mutationFn: async (data: any) => {
+            const res = await fetch("/api/audits", {
+                method: "POST",
+                headers: { 
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${localStorage.getItem("audit_token") || ""}`
+                },
+                body: JSON.stringify(data)
+            });
+            return res.json();
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ["/api/audits"] });
+            queryClient.invalidateQueries({ queryKey: ["audits"] });
             toast({ title: "Success", description: "Audit created successfully" });
-        },
-        onError: (error: Error) => {
-            toast({ title: "Error", description: error.message, variant: "destructive" });
         },
     });
 }
@@ -58,12 +58,11 @@ export function useUpdateAudit() {
 
     return useMutation({
         mutationFn: async ({ id, ...data }: UpdateAuditParams) => {
-            const res = await apiRequest("PATCH", `/api/audits/${id}`, data);
-            return await res.json();
+            return api.updateAudit(id, data);
         },
         onSuccess: (data: any) => {
-            queryClient.invalidateQueries({ queryKey: ["/api/audits"] });
-            queryClient.invalidateQueries({ queryKey: ["/api/audits", data._id] });
+            queryClient.invalidateQueries({ queryKey: ["audits"] });
+            queryClient.invalidateQueries({ queryKey: ["audit", data._id] });
             toast({ title: "Success", description: "Audit updated" });
         },
     });
@@ -75,10 +74,13 @@ export function useDeleteAudit() {
 
     return useMutation({
         mutationFn: async (id: string) => {
-            await apiRequest("DELETE", `/api/audits/${id}`);
+            await fetch(`/api/audits/${id}`, {
+                method: "DELETE",
+                headers: { "Authorization": `Bearer ${localStorage.getItem("audit_token") || ""}` }
+            });
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ["/api/audits"] });
+            queryClient.invalidateQueries({ queryKey: ["audits"] });
             toast({ title: "Deleted", description: "Audit has been removed" });
         },
     });
@@ -86,47 +88,23 @@ export function useDeleteAudit() {
 
 // Audit Items Hooks
 
-export function useCreateAuditItem(auditId: string) {
-    const queryClient = useQueryClient();
-    const { toast } = useToast();
-
-    return useMutation({
-        mutationFn: async (data: Omit<InsertAuditItem, "auditId">) => {
-            const res = await apiRequest("POST", `/api/audits/${auditId}/items`, data);
-            return await res.json();
-        },
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ["/api/audits", auditId] });
-            toast({ title: "Item Added", description: "Audit item created successfully" });
-        },
-    });
-}
-
 export function useUpdateAuditItem(auditId: string) {
     const queryClient = useQueryClient();
 
     return useMutation({
         mutationFn: async ({ id, ...data }: UpdateAuditItemParams) => {
-            const res = await apiRequest("PATCH", `/api/audit-items/${id}`, data);
-            return await res.json();
+            const res = await fetch(`/api/audit-items/${id}`, {
+                method: "PATCH",
+                headers: { 
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${localStorage.getItem("audit_token") || ""}`
+                },
+                body: JSON.stringify(data)
+            });
+            return res.json();
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ["/api/audits", auditId] });
-        },
-    });
-}
-
-export function useDeleteAuditItem(auditId: string) {
-    const queryClient = useQueryClient();
-    const { toast } = useToast();
-
-    return useMutation({
-        mutationFn: async (id: string) => {
-            await apiRequest("DELETE", `/api/audit-items/${id}`);
-        },
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ["/api/audits", auditId] });
-            toast({ title: "Deleted", description: "Item removed" });
+            queryClient.invalidateQueries({ queryKey: ["audit", auditId] });
         },
     });
 }
@@ -139,23 +117,19 @@ export function useGenerateInsights(auditId: string) {
 
     return useMutation({
         mutationFn: async () => {
-            const res = await apiRequest("POST", `/api/audits/${auditId}/generate-insights`);
-            return await res.json();
+            const res = await fetch(`/api/audits/${auditId}/generate-insights`, {
+                method: "POST",
+                headers: { "Authorization": `Bearer ${localStorage.getItem("audit_token") || ""}` }
+            });
+            return res.json();
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ["/api/audits", auditId] });
+            queryClient.invalidateQueries({ queryKey: ["audit", auditId] });
             toast({
                 title: "AI Analysis Complete",
                 description: "Audit insights generated successfully",
             });
         },
-        onError: (error: Error) => {
-            toast({
-                title: "Generation Failed",
-                description: error.message,
-                variant: "destructive"
-            });
-        }
     });
 }
 
@@ -164,22 +138,14 @@ export function useRepoAudit() {
     const { toast } = useToast();
 
     return useMutation({
-        mutationFn: async ({ owner, repo }: { owner: string; repo: string }) => {
-            const res = await apiRequest("POST", `/api/repos/${owner}/${repo}/audit`);
-            return await res.json();
+        mutationFn: async ({ owner, repo, branch }: { owner: string; repo: string; branch: string }) => {
+            return api.startAudit(owner, repo, branch);
         },
         onSuccess: (data: any) => {
-            queryClient.invalidateQueries({ queryKey: ["/api/audits"] });
+            queryClient.invalidateQueries({ queryKey: ["audits"] });
             toast({
                 title: "Audit Complete",
                 description: `Successfully analyzed ${data.audit.title}`,
-            });
-        },
-        onError: (error: Error) => {
-            toast({
-                title: "Audit Failed",
-                description: error.message,
-                variant: "destructive",
             });
         },
     });
@@ -187,11 +153,10 @@ export function useRepoAudit() {
 
 export function useBranches(owner: string, repo: string) {
     return useQuery<string[]>({
-        queryKey: ["/api/repos", owner, repo, "branches"],
+        queryKey: ["branches", owner, repo],
         queryFn: async () => {
             if (!owner || !repo) return [];
-            const res = await apiRequest("GET", `/api/repos/${owner}/${repo}/branches`);
-            return await res.json();
+            return api.getBranches(owner, repo);
         },
         enabled: !!owner && !!repo,
     });
@@ -202,20 +167,20 @@ export function useApplyFix() {
 
     return useMutation({
         mutationFn: async ({ owner, repo, issues, targetBranch }: { owner: string; repo: string; issues: any[]; targetBranch: string }) => {
-            const res = await apiRequest("POST", `/api/repos/${owner}/${repo}/fix`, { issues, targetBranch });
-            return await res.json();
+            const res = await fetch(`/api/repos/${owner}/${repo}/fix`, {
+                method: "POST",
+                headers: { 
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${localStorage.getItem("audit_token") || ""}`
+                },
+                body: JSON.stringify({ issues, targetBranch })
+            });
+            return res.json();
         },
         onSuccess: (data: any) => {
             toast({
                 title: "Success",
-                description: `Created Pull Request: ${data.html_url.split('/').pop()}`,
-            });
-        },
-        onError: (error: Error) => {
-            toast({
-                title: "Error",
-                description: error.message,
-                variant: "destructive",
+                description: `Created Pull Request successfully!`,
             });
         },
     });

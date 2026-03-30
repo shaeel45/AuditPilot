@@ -53,10 +53,27 @@ export const api = {
     return res.json();
   },
 
-  async startAudit(owner: string, repo: string) {
+  async updateAudit(auditId: string, data: any) {
+    const res = await fetch(`/api/audits/${auditId}`, {
+      method: "PATCH",
+      headers: { ...getAuthHeader(), "Content-Type": "application/json" },
+      body: JSON.stringify(data)
+    });
+    if (!res.ok) throw new Error("Failed to update audit");
+    return res.json();
+  },
+
+  async getBranches(owner: string, repo: string) {
+    const res = await fetch(`/api/repos/${owner}/${repo}/branches`, { headers: getAuthHeader() });
+    if (!res.ok) throw new Error("Failed to fetch branches");
+    return res.json();
+  },
+
+  async startAudit(owner: string, repo: string, branch: string) {
     const res = await fetch(`/api/repos/${owner}/${repo}/audit`, {
       method: "POST",
-      headers: getAuthHeader()
+      headers: { ...getAuthHeader(), "Content-Type": "application/json" },
+      body: JSON.stringify({ branch })
     });
     if (!res.ok) throw new Error("Failed to start audit");
     return res.json();
