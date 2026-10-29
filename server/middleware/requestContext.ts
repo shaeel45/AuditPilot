@@ -2,14 +2,6 @@ import type { NextFunction, Request, Response } from "express";
 import { randomUUID } from "node:crypto";
 import { childLogger } from "../config/logger";
 
-declare module "express" {
-  interface Request {
-    requestId?: string;
-    log: ReturnType<typeof childLogger>;
-    startAt?: number;
-  }
-}
-
 /**
  * Attaches a request id, a scoped logger, and timing to every request.
  * The request id is echoed to the client for support/debug correlation.

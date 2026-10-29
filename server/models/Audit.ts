@@ -1,15 +1,27 @@
-import mongoose from "mongoose";
+import mongoose, { type Document, type Model, type Schema } from "mongoose";
 
-const auditSchema = new mongoose.Schema({
+export interface AuditDocument extends Document {
+  title: string;
+  description?: string;
+  status: "draft" | "in_progress" | "completed";
+  priority: "low" | "medium" | "high" | "critical";
+  auditorId?: string;
+  scope?: string;
+  branch: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const auditSchema: Schema<AuditDocument> = new mongoose.Schema({
     title: { type: String, required: true },
     description: { type: String },
     status: { type: String, default: "draft", enum: ["draft", "in_progress", "completed"] },
     priority: { type: String, default: "medium", enum: ["low", "medium", "high", "critical"] },
-    auditorId: { type: String }, // Can be linked to a user later
+    auditorId: { type: String }, // legacy field — superseded by userId in the ownership step
     scope: { type: String },
     branch: { type: String, default: "main" },
-    createdAt: { type: Date, default: Date.now },
-    updatedAt: { type: Date, default: Date.now },
-});
+}, { timestamps: true });
 
-export const Audit = mongoose.model("Audit", auditSchema);
+export const Audit: Model<AuditDocument> =
+  (mongoose.models.Audit as Model<AuditDocument>) ||
+  mongoose.model<AuditDocument>("Audit", auditSchema);

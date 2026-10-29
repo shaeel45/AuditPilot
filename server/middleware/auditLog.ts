@@ -33,10 +33,10 @@ export function recordAuditLog(req: Request, entry: AuditLogEntry): void {
       userAgent: req.headers["user-agent"],
       meta: { requestId: req.requestId, ...entry.meta },
     }).catch(err => {
-      logger.warn({ err: err?.message }, "audit log write failed");
+      logger.warn({ err: err instanceof Error ? err.message : String(err) }, "audit log write failed");
     });
   } catch (err) {
-    logger.warn({ err: err?.message }, "audit log construction failed");
+    logger.warn({ err: err instanceof Error ? err.message : String(err) }, "audit log construction failed");
   }
 }
 
@@ -50,7 +50,7 @@ export function auditTrail(entry: AuditLogEntry | ((req: Request, res: Response)
           const resolved = typeof entry === "function" ? entry(req, res) : entry;
           recordAuditLog(req, resolved);
         } catch (err) {
-          logger.warn({ err: err?.message }, "audit middleware failed");
+          logger.warn({ err: err instanceof Error ? err.message : String(err) }, "audit middleware failed");
         }
       }
     });

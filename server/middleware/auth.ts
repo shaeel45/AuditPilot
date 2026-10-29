@@ -30,17 +30,25 @@ export function clearAuthCookie(res: Response) {
  * Transparent migration: legacy plaintext `accessToken` is encrypted once on
  * first authenticated use and the plaintext field removed.
  */
-async function migrateToken(user: { _id: unknown; accessToken?: string; accessTokenEncrypted?: string }) {
+async function migrateToken(user: {
+  _id: unknown;
+  accessToken?: string | null;
+  accessTokenEncrypted?: string | null;
+}) {
   if (!user.accessToken) {
     return user.accessTokenEncrypted ?? null;
   }
   try {
     const encrypted = encryptSecret(user.accessToken);
-    await User.updateOne({ _id: user._id }, { $set: { accessTokenEncrypted: encrypted }, $unset: { accessToken: 1 } });
+    await User.updateOne(
+      { _id: String(user._id) },
+      { $set: { accessTokenEncrypted: encrypted }, $unset: { accessToken: 1 } },
+    );
     logger.info({ userId: String(user._id) }, "migrated legacy plaintext GitHub token to encrypted storage");
     return encrypted;
   } catch (err) {
-    logger.warn({ err: err?.message }, "token encryption migration failed");
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn({ err: message }, "token encryption migration failed");
     return user.accessTokenEncrypted ?? null;
   }
 }
@@ -97,11 +105,4 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   (req as { githubTokenEnc?: string | null }).githubTokenEnc = enc;
   (req as { githubAccessToken?: string | null }).githubAccessToken = githubAccessToken;
   next();
-}
-
-declare module "express" {
-  interface Request {
-    user?: import("../models/User").UserDocument;
-    githubTokenEnc?: string | null;
-  }
 }
