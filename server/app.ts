@@ -9,6 +9,7 @@ import { auditsRouter } from "./modules/audits/routes";
 import { reviewsRouter } from "./modules/reviews/routes";
 import { reportsRouter } from "./modules/reports/routes";
 import { billingRouter } from "./modules/billing/routes";
+import { jobsRouter } from "./modules/jobs/routes";
 import { logger } from "./config/logger";
 
 declare module "http" {
@@ -42,6 +43,7 @@ export function createApp(): express.Express {
   app.use("/api", reviewsRouter);
   app.use("/api", reportsRouter);
   app.use("/api", billingRouter);
+  app.use("/api", jobsRouter);
 
   logger.debug("app assembled");
 

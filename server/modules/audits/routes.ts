@@ -5,9 +5,9 @@ import { assertOwnership } from "../../middleware/ownership";
 import { recordAuditLog } from "../../middleware/auditLog";
 import { githubClientFromToken, GitHubApiError } from "../../integrations/github/client";
 import { logger } from "../../config/logger";
-import { User } from "../../models/User";
 import { Audit, type AuditDocument } from "../../models/Audit";
 import { planLimitError } from "../usage/limits";
+import { enqueue } from "../jobs/queue";
 import {
   applyFixesAndCreatePR,
   assertItemAccess,
@@ -17,7 +17,6 @@ import {
   deleteAuditItem,
   findOwnAuditWithItems,
   listAudits,
-  runRepoAudit,
   updateAudit,
   updateAuditItem,
 } from "./service";
@@ -51,14 +50,13 @@ async function ownAuditOr404(id: string, req: Request) {
   return assertOwnership(audit, req.user!, "Audit") as AuditDocument;
 }
 
-// === Repo deep audit ===
+// === Repo deep audit (job-based — worker handles the long-running work) ===
 
 auditsRouter.post("/repos/:owner/:repo/audit", requireAuth, async (req: Request, res: Response) => {
   const owner = String(req.params.owner);
   const repo = String(req.params.repo);
   const { branch: requestedBranch } = (req.body ?? {}) as { branch?: string };
   const user = req.user!;
-  const gh = githubClientFromToken(tokenOf(req));
 
   // Plan enforcement (legacy check — replaced by the usage service in a later commit)
   const limitError = planLimitError(user, "audits");
@@ -66,21 +64,23 @@ auditsRouter.post("/repos/:owner/:repo/audit", requireAuth, async (req: Request,
     return res.status(402).json(limitError);
   }
 
-  try {
-    const result = await runRepoAudit({ owner, repo, requestedBranch, gh, userId: String(user._id) });
+  // Usage counting happens in the WORKER on success, so failed audits no
+  // longer consume quota (aligned with C8's refund-on-failure semantics).
+  const job = await enqueue({
+    type: "repo-audit",
+    userId: user._id,
+    payload: { owner, repo, requestedBranch },
+  });
 
-    await User.findByIdAndUpdate(String(user._id), { $inc: { auditsUsed: 1 } });
-    recordAuditLog(req, {
-      action: "repo.audit.completed",
-      targetType: "repo",
-      targetId: `${owner}/${repo}`,
-      meta: { branch: result.branch, issues: result.issues.length },
-    });
+  recordAuditLog(req, {
+    action: "repo.audit.queued",
+    targetType: "repo",
+    targetId: `${owner}/${repo}`,
+    meta: { jobId: String(job._id), branch: requestedBranch ?? null },
+  });
+  logger.info({ jobId: String(job._id), owner, repo, userId: String(user._id) }, "repo audit queued");
 
-    return res.json({ audit: result.audit, issues: result.issues });
-  } catch (error) {
-    return handleError(error, res, "robust AI audit error");
-  }
+  return res.status(202).json({ jobId: String(job._id) });
 });
 
 // === Audit CRUD (ownership-filtered) ===

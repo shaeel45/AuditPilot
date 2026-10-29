@@ -1,4 +1,5 @@
 import pino from "pino";
+import pretty from "pino-pretty";
 import { ENV, isDev, isProd } from "./env";
 
 /**
@@ -33,23 +34,28 @@ const redact = {
 
 const level = ENV.LOG_LEVEL;
 
-export const logger = pino({
-  level,
-  redact,
-  base: { service: "auditpilot-api" },
-  ...(isProd
-    ? {}
-    : {
-        transport: {
-          target: "pino-pretty",
-          options: {
-            colorize: true,
-            translateTime: "SYS:HH:MM:ss.l",
-            ignore: "pid,hostname,service",
-          },
-        },
-      }),
-});
+/**
+ * DEV Pretty logging — main-process stream, deliberately NOT the
+ * pino-pretty worker-thread transport.
+ *
+ * The worker-thread transport crashes natively (0xC0000005) when another
+ * native worker-owning library (vite dev server / tailwind oxide workers)
+ * initializes in the same process. A synchronous in-process pretty stream
+ * is slower, but is identical visually and stable with vite in dev.
+ * Production stays JSON (no transport at all).
+ */
+export const logger = pino(
+  {
+    level,
+    redact,
+    base: { service: "auditpilot-api" },
+  },
+  isProd ? undefined : pretty({
+    colorize: true,
+    translateTime: "SYS:HH:MM:ss.l",
+    ignore: "pid,hostname,service",
+  }),
+);
 
 export type Logger = pino.Logger;
 

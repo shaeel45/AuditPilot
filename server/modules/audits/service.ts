@@ -1,8 +1,9 @@
+import mongoose, { type Types } from "mongoose";
 import { Audit, type AuditDocument } from "../../models/Audit";
 import { AuditItem, type AuditItemDocument } from "../../models/AuditItem";
 import { Report } from "../../models/Report";
 import { GitHubClient, GitHubApiError } from "../../integrations/github/client";
-import { ai, safeJsonParse, triageModel } from "../../integrations/ai/openaiClient";
+import { runTask, untrustedDataBlock } from "../../integrations/ai/gateway";
 import { logger } from "../../config/logger";
 import { AppError } from "../../middleware/errorHandler";
 import { assertOwnership } from "../../middleware/ownership";
@@ -102,6 +103,11 @@ interface RepoAuditInput {
   gh: GitHubClient;
   /** Owning user — stamped onto the audit and every item it produces. */
   userId: string;
+  /**
+   * Progress hook — the job worker passes one that funnels into the queue;
+   * HTTP callers may omit it (migrated 1:1 from the legacy synchronous flow).
+   */
+  onProgress?: (snapshot: { stage: "fetching" | "analyzing" | "verifying"; percent: number; message?: string }) => void | Promise<void>;
 }
 
 interface AuditIssue {
@@ -162,12 +168,14 @@ interface RepoAuditResult {
 
 /** Runs the full repo audit synchronously (protected by user's plan check in the route). */
 export async function runRepoAudit(input: RepoAuditInput): Promise<RepoAuditResult> {
-  const { owner, repo, requestedBranch, gh, userId } = input;
+  const { owner, repo, requestedBranch, gh, onProgress } = input;
+  const ownerObjectId = new mongoose.Types.ObjectId(input.userId);
 
   // 1. Resolve target branch
   const targetBranch = requestedBranch || (await resolveDefaultBranch(owner, repo, gh));
 
   // 2. Fetch the full tree for that branch
+  await onProgress?.({ stage: "fetching", percent: 15, message: `Fetching file tree (${targetBranch})…` });
   const treeData = await gh.get<{ tree: { type: string; path: string }[] }>(
     `/repos/${owner}/${repo}/git/trees/${targetBranch}?recursive=1`,
   );
@@ -185,7 +193,8 @@ export async function runRepoAudit(input: RepoAuditInput): Promise<RepoAuditResu
 
   // 3. Fetch contents (truncated per file)
   const chunks: string[] = [];
-  for (const path of finalFiles) {
+  for (let i = 0; i < finalFiles.length; i++) {
+    const path = finalFiles[i];
     try {
       const content = await gh.raw(`/repos/${owner}/${repo}/contents/${path}`);
       const truncated =
@@ -196,49 +205,37 @@ export async function runRepoAudit(input: RepoAuditInput): Promise<RepoAuditResu
     } catch (err) {
       logger.warn({ path, err: (err as Error).message }, "skipped unreadable file during audit");
     }
+    await onProgress?.({
+      stage: "fetching",
+      percent: 15 + Math.round(((i + 1) / finalFiles.length) * 30),
+      message: `Reading repository files… (${i + 1}/${finalFiles.length})`,
+    });
   }
   const repoContent = chunks.join("\n");
   if (repoContent.length === 0) {
     throw AppError.badRequest("No readable file content available for analysis in this repository.");
   }
 
-  // 4. AI analysis
-  let aiResponse;
-  try {
-    aiResponse = await ai().chat.completions.create({
-      model: triageModel(),
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are an expert security and performance auditor. Analyze the provided repository files and identify real issues. For each issue, provide: type (security, performance, accessibility), severity (critical, medium, low), file path, description, and if a fix is available, provide the old code and the new fixed code. Output valid JSON ONLY. Do not include any explanation outside the JSON object. The JSON should have an 'issues' array.",
-        },
-        {
-          role: "user",
-          content: `REPOSITORY: ${owner}/${repo}\n\nFILES CONTENT:\n${repoContent}\n\nAnalyze the files above and provide the audit issues in the requested JSON format.`,
-        },
-      ],
-    });
-  } catch (aiErr: unknown) {
-    const e = aiErr as { status?: number; message?: string; code?: string };
-    logger.error({ err: e.message }, "AI completion failed during repo audit");
-    if (e.code === "insufficient_quota") {
-      throw AppError.tooMany(
-        "OpenAI Quota Exceeded. Please check your billing/credits at platform.openai.com.",
-      );
-    }
-    if (e.status === 401 || e.status === 403 || e.message?.includes("401") || e.message?.includes("403")) {
-      throw AppError.internal("AI provider authentication failed — check the AI API key configuration.");
-    }
-    throw aiErr;
-  }
+  // 4. AI analysis — rereouted through the AI gateway (retries + zod gate +
+  // cost tracking). Repository content is untrusted: wrapped in data markers.
+  await onProgress?.({ stage: "analyzing", percent: 55, message: "Running AI analysis…" });
+  const { data: parsed } = await runTask<{ issues?: unknown }>(
+    "repo-audit",
+    {
+      system:
+        "You are an expert security and performance auditor. Analyze the provided repository files and identify real issues. For each issue, provide: type (security, performance, accessibility), severity (critical, medium, low), file path, description, and if a fix is available, provide the old code and the new fixed code. Output valid JSON ONLY with an 'issues' array.",
+      user: `REPOSITORY: ${owner}/${repo}\n\n${untrustedDataBlock(`FILES of ${owner}/${repo} @ ${targetBranch}`, repoContent)}\n\nAnalyze the file data above and provide the audit issues in the requested JSON format.`,
+    },
+    { userId: input.userId },
+  );
+  await onProgress?.({ stage: "verifying", percent: 80, message: "Verifying and persisting results…" });
 
-  const parsed = safeJsonParse(aiResponse.choices[0].message.content || '{"issues": []}');
   const issues = normalizeIssues(parsed?.issues ?? []);
 
   // 5. Persist audit + items (owned by the requesting user)
+  await onProgress?.({ stage: "verifying", percent: 90, message: "Saving audit results…" });
   const audit = await createAudit({
-    userId,
+    userId: ownerObjectId,
     title: `Audit: ${repo}`,
     description: `Deep AI audit for ${owner}/${repo} using dynamic file discovery.`,
     status: "completed",
@@ -251,7 +248,7 @@ export async function runRepoAudit(input: RepoAuditInput): Promise<RepoAuditResu
   for (const issue of issues) {
     const item = await createAuditItem({
       auditId: audit._id,
-      userId,
+      userId: ownerObjectId,
       label: String(issue.description || "Point of interest detected"),
       type: String(issue.type || "security"),
       value: issue.file ? String(issue.file) : "Root",
@@ -278,7 +275,7 @@ export async function runRepoAudit(input: RepoAuditInput): Promise<RepoAuditResu
 /** Whitespace-flexible single-replacing of old→new; returns null if no match. */
 export function applyReplacement(currentContent: string, oldCode: string, newCode: string): string | null {
   if (currentContent.includes(oldCode)) {
-    let next = currentContent.replace(oldCode, newCode);
+    const next = currentContent.replace(oldCode, newCode);
     if (next !== currentContent) return next;
   }
   // normalized match

@@ -1,12 +1,12 @@
 import { Router, type Request, Response } from "express";
 import { requireAuth } from "../../middleware/auth";
-import { githubClientFromToken, GitHubApiError, GitHubClient } from "../../integrations/github/client";
-import { ai, safeJsonParse, triageModel } from "../../integrations/ai/openaiClient";
+import { githubClientFromToken, GitHubApiError } from "../../integrations/github/client";
 import { AppError } from "../../middleware/errorHandler";
 import { recordAuditLog } from "../../middleware/auditLog";
 import { logger } from "../../config/logger";
 import { User } from "../../models/User";
 import { planLimitError } from "../usage/limits";
+import { reviewPullRequest } from "./service";
 
 export const reviewsRouter = Router();
 
@@ -92,7 +92,9 @@ reviewsRouter.post(
   "/repos/:owner/:repo/pulls/:number/audit",
   requireAuth,
   async (req: Request, res: Response) => {
-    const { owner, repo, number } = req.params;
+    const owner = String(req.params.owner);
+    const repo = String(req.params.repo);
+    const number = String(req.params.number);
     const user = req.user!;
     const gh = githubClientFromToken(tokenOf(req));
 
@@ -100,44 +102,22 @@ reviewsRouter.post(
     const limitError = planLimitError(user, "pullRequests");
     if (limitError) return res.status(402).json(limitError);
 
-    interface PRFileDiff {
-      filename: string;
-      patch?: string;
-    }
-
     try {
-      const files = await gh.get<PRFileDiff[]>(`/repos/${owner}/${repo}/pulls/${number}/files`);
-      const prContext = files
-        .map(f => `File: ${f.filename}\nDiff:\n${f.patch}`)
-        .join("\n\n");
-
-      const aiResponse = await ai().chat.completions.create({
-        model: triageModel(),
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are an expert code reviewer. Analyze the following Pull Request diffs and identify any security vulnerabilities, performance issues, or bugs introduced in these changes. For each issue, provide: type, severity, description, and a fix (old_code and new_code). Output valid JSON ONLY with an 'issues' array.",
-          },
-          {
-            role: "user",
-            content: `Review this Pull Request (${owner}/${repo} #${number}):\n\n${prContext}`,
-          },
-        ],
-      });
-
-      const result = safeJsonParse(aiResponse.choices[0].message.content || '{"issues": []}') || {
-        issues: [],
-      };
+      // AI gateway review (retries, schema gate, cost tracking) — extracted
+      // to service so the webhook-triggered job worker (C9) reuses it.
+      const issues = await reviewPullRequest({ owner, repo, number, gh, userId: String(user._id) });
 
       // Legacy behavior kept intentionally: starter plan counts usage here.
       // This will be replaced by the single-atomic-counter usage service.
       if (user.plan === "starter") {
-        await User.findByIdAndUpdate(user._id, { $inc: { pullRequestsUsed: 1 } });
+        await User.findByIdAndUpdate(String(user._id), { $inc: { pullRequestsUsed: 1 } });
       }
 
-      return res.json(result);
+      return res.json({ issues });
     } catch (error) {
+      if (error instanceof AppError) {
+        return res.status(error.status).json({ message: error.message });
+      }
       logger.error({ err: (error as Error).message, owner, repo, number }, "PR audit error");
       return res.status(500).json({ message: (error as Error).message });
     }

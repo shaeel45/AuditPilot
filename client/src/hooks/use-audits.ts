@@ -117,31 +117,48 @@ export function useGenerateInsights(auditId: string) {
                 method: "POST",
                 credentials: "include"
             });
-            return res.json();
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}));
+                throw new Error(body.message || "Failed to queue AI insights");
+            }
+            return res.json() as Promise<{ jobId: string }>;
         },
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ["audit", auditId] });
+        onSuccess: ({ jobId }) => {
+            toast({ title: "AI Analysis Queued", description: "Insights are being generated…" });
+            const poll = async (attempt: number = 0): Promise<void> => {
+                try {
+                    const job = await api.getJob(jobId);
+                    if (job.state === "done") {
+                        queryClient.invalidateQueries({ queryKey: ["audit", auditId] });
+                        queryClient.invalidateQueries({ queryKey: ["audits"] });
+                        toast({
+                            title: "AI Analysis Complete",
+                            description: "Audit insights generated successfully",
+                        });
+                        return;
+                    }
+                    if (job.state === "failed") {
+                        toast({
+                            title: "AI Analysis Failed",
+                            description: job.error || "Insights could not be generated",
+                            variant: "destructive",
+                        });
+                        return;
+                    }
+                    // still running — keep polling (bounded ~5 min)
+                    if (attempt < 200) setTimeout(() => void poll(attempt + 1), 1500);
+                } catch {
+                    // transient error — keep trying while within budget
+                    if (attempt < 200) setTimeout(() => void poll(attempt + 1), 2500);
+                }
+            };
+            void poll();
+        },
+        onError: (error: unknown) => {
             toast({
-                title: "AI Analysis Complete",
-                description: "Audit insights generated successfully",
-            });
-        },
-    });
-}
-
-export function useRepoAudit() {
-    const queryClient = useQueryClient();
-    const { toast } = useToast();
-
-    return useMutation({
-        mutationFn: async ({ owner, repo, branch }: { owner: string; repo: string; branch: string }) => {
-            return api.startAudit(owner, repo, branch);
-        },
-        onSuccess: (data: any) => {
-            queryClient.invalidateQueries({ queryKey: ["audits"] });
-            toast({
-                title: "Audit Complete",
-                description: `Successfully analyzed ${data.audit.title}`,
+                title: "AI Analysis Failed",
+                description: error instanceof Error ? error.message : "Failed to generate insights",
+                variant: "destructive",
             });
         },
     });

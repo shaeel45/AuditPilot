@@ -83,6 +83,12 @@ export const api = {
       ...cred,
     });
     if (!res.ok) throw new Error("Failed to start audit");
+    return res.json(); // 202 { jobId }
+  },
+
+  async getJob(jobId: string) {
+    const res = await fetch(`/api/jobs/${jobId}`, { ...cred });
+    if (!res.ok) throw new Error("Failed to fetch job");
     return res.json();
   },
 

@@ -16,9 +16,27 @@ const httpServer = createServer(app);
 async function startServer() {
   await connectDB();
 
-  if (isProd && !process.env.NETLIFY) {
+  // Serverless mode (legacy Netlify function): no workers, no listener,
+  // no dev assets. initPromise must still resolve for the function handler.
+  if (process.env.NETLIFY) {
+    return;
+  }
+
+  // Background workers (job queue consumers).
+  // DISABLE_WORKERS=1 → API-only process; WORKER_ONLY=1 → this process runs
+  // ONLY workers (no listener). Default (neither set): one web+worker process.
+  if (!ENV.DISABLE_WORKERS) {
+    const { startWorkers } = await import("./modules/jobs/workers");
+    startWorkers();
+  }
+
+  if (ENV.WORKER_ONLY) {
+    return;
+  }
+
+  if (isProd) {
     serveStatic(app);
-  } else if (ENV.NODE_ENV !== "production") {
+  } else {
     const { setupVite } = await import("./vite");
     await setupVite(httpServer, app);
   }
@@ -27,15 +45,12 @@ async function startServer() {
   // shadow those responders.
   registerTerminalHandlers(app);
 
-  // Only listen if not running serverless
-  if (!process.env.NETLIFY) {
-    httpServer.listen(
-      { port: ENV.PORT, host: "0.0.0.0" },
-      () => {
-        log(`serving on port ${ENV.PORT}`);
-      },
-    );
-  }
+  httpServer.listen(
+    { port: ENV.PORT, host: "0.0.0.0" },
+    () => {
+      log(`serving on port ${ENV.PORT}`);
+    },
+  );
 }
 
 const initPromise = startServer().catch(err => {

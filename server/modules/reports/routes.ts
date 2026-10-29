@@ -1,18 +1,10 @@
 import { Router, type Request, Response } from "express";
 import { requireAuth } from "../../middleware/auth";
-import { ai, safeJsonParse, triageModel } from "../../integrations/ai/openaiClient";
-import { logger } from "../../config/logger";
+import { enqueue } from "../jobs/queue";
 import { Report, type ReportDocument } from "../../models/Report";
 import { findOwnAuditWithItems } from "../audits/service";
 
 export const reportsRouter = Router();
-
-interface AIInsightsResult {
-  summary?: string;
-  riskScore?: number;
-  insights?: unknown;
-  recommendations?: unknown;
-}
 
 reportsRouter.post(
   "/audits/:id/generate-insights",
@@ -21,54 +13,19 @@ reportsRouter.post(
     const auditId = String(req.params.id);
     const user = req.user!;
 
-    try {
-      // Ownership-checked: a foreign/untagged audit is a plain 404 here
-      const audit = await findOwnAuditWithItems(auditId, String(user._id));
-      if (!audit) {
-        return res.status(404).json({ message: "Audit not found" });
-      }
-
-      const items = audit.items ?? [];
-      const auditContext = `
-        Title: ${audit.title}
-        Description: ${audit.description}
-        Priority: ${audit.priority}
-        Items:
-        ${items.map(i => `- ${i.label}: ${i.value || "N/A"} (Status: ${i.complianceStatus || "Pending"})`).join("\n")}
-      `;
-
-      const response = await ai().chat.completions.create({
-        model: triageModel(),
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are an expert audit compliance assistant. Analyze the following audit data and provide a summary, a risk score (0-100), and detailed insights/recommendations. Output valid JSON ONLY. Do not include any explanation outside the JSON object.",
-          },
-          { role: "user", content: auditContext },
-        ],
-      });
-
-      const result = (safeJsonParse(response.choices[0].message.content || "{}") as AIInsightsResult) || {};
-
-      const summary = result.summary || "No summary generated.";
-      const riskScore = typeof result.riskScore === "number" ? result.riskScore : 50;
-      const generatedContent =
-        result.insights || result.recommendations || JSON.stringify(result, null, 2);
-
-      const report = await Report.create({
-        auditId,
-        userId: user._id,
-        summary,
-        riskScore,
-        generatedContent,
-      });
-
-      return res.json(report);
-    } catch (error) {
-      logger.error({ err: (error as Error).message }, "AI insights generation error");
-      return res.status(500).json({ message: "Failed to generate insights" });
+    // Ownership-checked BEFORE enqueueing: a foreign/untagged audit is a
+    // plain 404 here (we never create jobs for other users' audits).
+    const audit = await findOwnAuditWithItems(auditId, String(user._id));
+    if (!audit) {
+      return res.status(404).json({ message: "Audit not found" });
     }
+
+    const job = await enqueue({
+      type: "report-insights",
+      userId: user._id,
+      payload: { auditId },
+    });
+    return res.status(202).json({ jobId: String(job._id) });
   },
 );
 

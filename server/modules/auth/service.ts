@@ -1,7 +1,33 @@
-import { encryptSecret } from "../../lib/crypto";
+import { encryptSecret, decryptSecret } from "../../lib/crypto";
 import { ENV } from "../../config/env";
 import jwt from "jsonwebtoken";
 import { User, type UserDocument } from "../../models/User";
+
+/**
+ * Resolves the decrypted GitHub token for a user WITHOUT a request object
+ * (job workers / scripts). Transparently falls back to the legacy plaintext
+ * field until that user's first authenticated migration runs.
+ * Returns null when the user has no token on record.
+ */
+export async function githubTokenForUser(userId: string | unknown): Promise<string | null> {
+  const user = (await User.findById(String(userId), null, {
+    select: "+accessToken +accessTokenEncrypted",
+    lean: true,
+  })) as {
+    _id: unknown;
+    accessToken?: string | null;
+    accessTokenEncrypted?: string | null;
+  } | null;
+  if (!user) return null;
+  if (user.accessTokenEncrypted) {
+    try {
+      return decryptSecret(user.accessTokenEncrypted);
+    } catch {
+      return null;
+    }
+  }
+  return user.accessToken ?? null;
+}
 
 export interface GitHubProfile {
   id: string | number;
