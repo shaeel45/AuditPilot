@@ -12,6 +12,17 @@ describe("parseEnv", () => {
     expect(r.env!.PORT).toBe(5000);
     expect(r.env!.AI_INTEGRATIONS_OPENAI_BASE_URL).toBe("https://openrouter.ai/api/v1");
     expect(r.env!.CLIENT_ORIGIN).toBe("http://localhost:5000,http://localhost:5173");
+    expect(r.env!.COOKIE_SAMESITE).toBe("lax"); // split deploys switch to "none"
+  });
+
+  it("COOKIE_SAMESITE accepts lax/none/strict and rejects other values", () => {
+    for (const v of ["lax", "none", "strict"]) {
+      const r = parseEnv({ ...base, COOKIE_SAMESITE: v });
+      expect(r.ok).toBe(true);
+      expect(r.env!.COOKIE_SAMESITE).toBe(v);
+    }
+    const bad = parseEnv({ ...base, COOKIE_SAMESITE: "stealth" });
+    expect(bad.ok).toBe(false);
   });
 
   it("fails without JWT_SECRET in production", () => {

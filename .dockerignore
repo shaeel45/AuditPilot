@@ -1,0 +1,14 @@
+# Keep the build context small and secrets out of the image
+node_modules
+dist
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+*.out.txt
+*_out.txt
+.probe*
+.DS_Store
+Thumbs.db
+netlify.toml

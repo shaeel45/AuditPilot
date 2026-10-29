@@ -6,6 +6,7 @@ import { Code2, Shield, GitPullRequest, Zap, Eye, Loader2 } from "lucide-react";
 import { NavItem } from "@/components/dashboard/NavItem";
 import { UsageCounter } from "@/components/dashboard/UsageCounter";
 import { LimitReachedModal } from "@/components/dashboard/LimitReachedModal";
+import { API_BASE } from "@/lib/api-service";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [location, setLocation] = useLocation();
@@ -14,7 +15,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const handleLogout = async () => {
     try {
-      await fetch("/api/auth/logout", { credentials: "include" });
+      await fetch(`${API_BASE}/api/auth/logout`, { credentials: "include" });
       localStorage.removeItem("authenticated");
       window.location.href = "/";
     } catch (err) {

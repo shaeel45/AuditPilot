@@ -40,22 +40,6 @@ async function buildAll() {
     external: externals,
     logLevel: "info",
   });
-
-  console.log("building netlify function...");
-  await esbuild({
-    entryPoints: ["server/netlify.ts"],
-    platform: "node",
-    bundle: true,
-    format: "cjs",
-    outfile: "dist/functions/api.js",
-    define: {
-      "process.env.NODE_ENV": '"production"',
-      "process.env.NETLIFY": "true",
-    },
-    minify: true,
-    external: externals,
-    logLevel: "info",
-  });
 }
 
 buildAll().catch((err) => {

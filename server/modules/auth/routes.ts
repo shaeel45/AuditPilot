@@ -1,12 +1,13 @@
 import { Router, type Request, Response } from "express";
 import { randomBytes } from "node:crypto";
 import { safeEqual } from "../../lib/crypto";
-import { isProd } from "../../config/env";
 import jwt from "jsonwebtoken";
 import { ENV } from "../../config/env";
 import { logger } from "../../config/logger";
 import { User, type UserDocument } from "../../models/User";
 import { recordAuditLog } from "../../middleware/auditLog";
+import { setAuthCookie, clearAuthCookie } from "../../middleware/auth";
+import { cookieOptions, OAUTH_STATE_COOKIE_MAX_AGE_MS } from "../../lib/cookies";
 import {
   createSessionToken,
   exchangeOAuthCode,
@@ -36,11 +37,8 @@ authRouter.get("/auth/github", (req: Request, res: Response) => {
   // OAuth state: CSRF protection; 10 min single-use cookie
   const state = randomBytes(16).toString("hex");
   res.cookie(GH_STATE_COOKIE, state, {
-    httpOnly: true,
-    secure: isProd,
-    sameSite: "lax",
-    path: "/",
-    maxAge: 10 * 60 * 1000,
+    ...cookieOptions(),
+    maxAge: OAUTH_STATE_COOKIE_MAX_AGE_MS,
   });
 
   res.redirect(githubOAuthUrl(redirectUri, state));
@@ -55,7 +53,7 @@ authRouter.get("/auth/github/callback", async (req: Request, res: Response) => {
   if (!paramState || !cookieState || !safeEqual(paramState, cookieState)) {
     return res.status(403).send("OAuth state validation failed. Please restart sign-in.");
   }
-  res.clearCookie(GH_STATE_COOKIE, { path: "/" });
+  res.clearCookie(GH_STATE_COOKIE, cookieOptions());
 
   try {
     const rawToken = await exchangeOAuthCode(String(code));
@@ -64,13 +62,7 @@ authRouter.get("/auth/github/callback", async (req: Request, res: Response) => {
 
     // JWT delivered ONLY via httpOnly cookie — never in a URL
     const jwtToken = createSessionToken(user);
-    res.cookie("audit_token", jwtToken, {
-      httpOnly: true,
-      secure: isProd,
-      sameSite: "lax",
-      path: "/",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    setAuthCookie(res, jwtToken);
 
     recordAuditLog(req, { action: "auth.login", targetType: "user", targetId: String(user._id), meta: { provider: "github" } });
     return res.redirect("/app");
@@ -81,12 +73,7 @@ authRouter.get("/auth/github/callback", async (req: Request, res: Response) => {
 });
 
 authRouter.get("/auth/logout", (req: Request, res: Response) => {
-  res.clearCookie("audit_token", {
-    httpOnly: true,
-    secure: isProd,
-    sameSite: "lax",
-    path: "/",
-  });
+  clearAuthCookie(res);
   res.json({ message: "Logged out successfully" });
 });
 

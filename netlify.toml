@@ -1,12 +1,11 @@
+# Static client hosting ONLY — the API is a self-hosted process
+# (server/index.ts, see Dockerfile). Netlify serves dist/public and
+# rewrites all paths to the SPA entry; /api calls go to the API origin
+# (client embeds it via VITE_API_BASE).
+
 [build]
   command = "npm run build"
   publish = "dist/public"
-  functions = "dist/functions"
-
-[[redirects]]
-  from = "/api/*"
-  to = "/.netlify/functions/api/:splat"
-  status = 200
 
 [[redirects]]
   from = "/*"

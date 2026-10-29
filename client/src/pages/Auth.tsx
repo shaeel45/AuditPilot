@@ -4,6 +4,7 @@ import { Github, Loader2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useAuthStatus } from "@/hooks/use-repos";
+import { API_BASE } from "@/lib/api-service";
 
 export default function Auth() {
   const [isLoading, setIsLoading] = useState(false);
@@ -24,7 +25,8 @@ export default function Auth() {
 
   const handleLogin = () => {
     setIsLoading(true);
-    window.location.href = "/api/auth/github";
+    // Top-level navigation to the API origin (single-origin or split deploy)
+    window.location.href = `${API_BASE}/api/auth/github`;
   };
 
   return (

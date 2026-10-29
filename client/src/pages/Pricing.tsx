@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import Navbar from "@/components/layout/Navbar";
 import Head from "@/components/seo/Head";
+import { API_BASE } from "@/lib/api-service";
 
 export default function Pricing() {
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
@@ -13,7 +14,7 @@ export default function Pricing() {
   const handleUpgrade = async (plan: string) => {
     setLoadingPlan(plan);
     try {
-      const response = await fetch("/api/billing/create-checkout-session", {
+      const response = await fetch(`${API_BASE}/api/billing/create-checkout-session`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ plan: plan.toLowerCase() }),

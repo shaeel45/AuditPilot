@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { InsertAudit, InsertAuditItem } from "@shared/types";
 import { useToast } from "@/hooks/use-toast";
-import { api } from "@/lib/api-service";
+import { api, API_BASE } from "@/lib/api-service";
 
 // Types for creating/updating
 type UpdateAuditParams = { id: string } & Partial<InsertAudit>;
@@ -35,7 +35,7 @@ export function useCreateAudit() {
 
     return useMutation({
         mutationFn: async (data: any) => {
-            const res = await fetch("/api/audits", {
+            const res = await fetch(`${API_BASE}/api/audits`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(data),
@@ -72,7 +72,7 @@ export function useDeleteAudit() {
 
     return useMutation({
         mutationFn: async (id: string) => {
-            await fetch(`/api/audits/${id}`, {
+            await fetch(`${API_BASE}/api/audits/${id}`, {
                 method: "DELETE",
                 credentials: "include"
             });
@@ -91,7 +91,7 @@ export function useUpdateAuditItem(auditId: string) {
 
     return useMutation({
         mutationFn: async ({ id, ...data }: UpdateAuditItemParams) => {
-            const res = await fetch(`/api/audit-items/${id}`, {
+            const res = await fetch(`${API_BASE}/api/audit-items/${id}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(data),
@@ -113,7 +113,7 @@ export function useGenerateInsights(auditId: string) {
 
     return useMutation({
         mutationFn: async () => {
-            const res = await fetch(`/api/audits/${auditId}/generate-insights`, {
+            const res = await fetch(`${API_BASE}/api/audits/${auditId}/generate-insights`, {
                 method: "POST",
                 credentials: "include"
             });
@@ -180,7 +180,7 @@ export function useApplyFix() {
 
     return useMutation({
         mutationFn: async ({ owner, repo, issues, targetBranch }: { owner: string; repo: string; issues: any[]; targetBranch: string }) => {
-            const res = await fetch(`/api/repos/${owner}/${repo}/fix`, {
+            const res = await fetch(`${API_BASE}/api/repos/${owner}/${repo}/fix`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ issues, targetBranch }),

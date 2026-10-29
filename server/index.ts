@@ -16,12 +16,6 @@ const httpServer = createServer(app);
 async function startServer() {
   await connectDB();
 
-  // Serverless mode (legacy Netlify function): no workers, no listener,
-  // no dev assets. initPromise must still resolve for the function handler.
-  if (process.env.NETLIFY) {
-    return;
-  }
-
   // Background workers (job queue consumers).
   // DISABLE_WORKERS=1 → API-only process; WORKER_ONLY=1 → this process runs
   // ONLY workers (no listener). Default (neither set): one web+worker process.

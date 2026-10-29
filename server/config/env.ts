@@ -72,6 +72,15 @@ const envSchema = z.object({
     .min(1)
     .default("http://localhost:5000,http://localhost:5173"),
 
+  // Cookie SameSite policy for the auth cookies. "lax" (default) fits
+  // same-site deployments (SPA and API share a parent domain, or are
+  // proxied on one origin). "none" is required when the API serves a
+  // different SITE (api.example.com ≠ app.example.com) — with "none" the
+  // Secure flag is forced on (browsers reject insecure SameSite=none).
+  COOKIE_SAMESITE: z
+    .enum(["lax", "none", "strict"])
+    .default("lax"),
+
   APP_URL: z.string().url().optional(),
 
   WORKER_ONLY: z

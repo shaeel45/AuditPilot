@@ -1,29 +1,22 @@
 import type { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
-import { ENV, isProd } from "../config/env";
+import { ENV } from "../config/env";
 import { logger } from "../config/logger";
 import { User } from "../models/User";
 import { decryptSecret, encryptSecret } from "../lib/crypto";
+import { cookieOptions, SESSION_COOKIE_MAX_AGE_MS } from "../lib/cookies";
 
 export const AUTH_COOKIE = "audit_token";
 
 export function setAuthCookie(res: Response, token: string) {
   res.cookie(AUTH_COOKIE, token, {
-    httpOnly: true,
-    secure: isProd,
-    sameSite: "lax",
-    path: "/",
-    maxAge: 7 * 24 * 60 * 60 * 1000, // match JWT expiry of 7d
+    ...cookieOptions(),
+    maxAge: SESSION_COOKIE_MAX_AGE_MS,
   });
 }
 
 export function clearAuthCookie(res: Response) {
-  res.clearCookie(AUTH_COOKIE, {
-    httpOnly: true,
-    secure: isProd,
-    sameSite: "lax",
-    path: "/",
-  });
+  res.clearCookie(AUTH_COOKIE, cookieOptions());
 }
 
 /**
