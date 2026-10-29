@@ -2,32 +2,13 @@ import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
 import { rm, readFile } from "fs/promises";
 
-// server deps to bundle to reduce openat(2) syscalls
-// which helps cold start times
+// server deps to bundle (everything else is external and loaded from node_modules)
 const allowlist = [
-  "@stepfun/step-3.5-flash:free",
-  "axios",
-  "connect-pg-simple",
-  "cors",
   "date-fns",
-  "drizzle-orm",
-  "drizzle-zod",
   "express",
-  "express-rate-limit",
-  "express-session",
   "jsonwebtoken",
-  "memorystore",
-  "multer",
-  "nanoid",
-  "nodemailer",
   "openai",
-  "passport",
-  "passport-local",
-  "pg",
   "stripe",
-  "uuid",
-  "ws",
-  "xlsx",
   "zod",
   "zod-validation-error",
 ];

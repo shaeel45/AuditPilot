@@ -1,0 +1,9 @@
+node_modules
+dist
+coverage
+package-lock.json
+.attached_assets
+client/public
+**/*.png
+**/*.jpg
+**/*.md

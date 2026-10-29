@@ -643,7 +643,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/audits/:id", requireAuth, async (req, res) => {
-    const audit = await storage.getAudit(req.params.id);
+    const audit = await storage.getAudit(String(req.params.id));
     if (!audit) {
       return res.status(404).json({ message: "Audit not found" });
     }
@@ -661,7 +661,7 @@ export async function registerRoutes(
 
   app.patch("/api/audits/:id", requireAuth, async (req, res) => {
     try {
-      const audit = await storage.updateAudit(req.params.id, req.body);
+      const audit = await storage.updateAudit(String(req.params.id), req.body);
       if (!audit) {
         return res.status(404).json({ message: "Audit not found" });
       }
@@ -672,7 +672,7 @@ export async function registerRoutes(
   });
 
   app.delete("/api/audits/:id", requireAuth, async (req, res) => {
-    await storage.deleteAudit(req.params.id);
+    await storage.deleteAudit(String(req.params.id));
     res.status(204).send();
   });
 
@@ -689,7 +689,7 @@ export async function registerRoutes(
 
   app.patch("/api/audit-items/:id", requireAuth, async (req, res) => {
     try {
-      const item = await storage.updateAuditItem(req.params.id, req.body);
+      const item = await storage.updateAuditItem(String(req.params.id), req.body);
       if (!item) {
         return res.status(404).json({ message: "Item not found" });
       }
@@ -700,7 +700,7 @@ export async function registerRoutes(
   });
 
   app.delete("/api/audit-items/:id", requireAuth, async (req, res) => {
-    await storage.deleteAuditItem(req.params.id);
+    await storage.deleteAuditItem(String(req.params.id));
     res.status(204).send();
   });
 
@@ -708,7 +708,7 @@ export async function registerRoutes(
 
   app.post("/api/audits/:id/generate-insights", requireAuth, async (req, res) => {
     try {
-      const auditId = req.params.id;
+      const auditId = String(req.params.id);
       const audit = await storage.getAudit(auditId);
 
       if (!audit) {

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { InsertAudit, InsertAuditItem } from "@shared/schema";
+import type { InsertAudit, InsertAuditItem } from "@shared/types";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api-service";
 
