@@ -9,7 +9,7 @@ import { logger } from "../../config/logger";
  * JSON extraction so modules stop reading env vars directly.
  */
 
-export const DEFAULT_TRIAGE_MODEL = "nvidia/nemotron-3-nano-30b-a3b:free";
+export const DEFAULT_TRIAGE_MODEL = "gemini-3.5-flash-lite";
 
 let client: OpenAI | null = null;
 
