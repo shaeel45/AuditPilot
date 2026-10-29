@@ -4,8 +4,7 @@ import { githubClientFromToken, GitHubApiError } from "../../integrations/github
 import { AppError } from "../../middleware/errorHandler";
 import { recordAuditLog } from "../../middleware/auditLog";
 import { logger } from "../../config/logger";
-import { User } from "../../models/User";
-import { planLimitError } from "../usage/limits";
+import { reserve, release, limitReachedError } from "../usage/service";
 import { reviewPullRequest } from "./service";
 
 export const reviewsRouter = Router();
@@ -98,23 +97,24 @@ reviewsRouter.post(
     const user = req.user!;
     const gh = githubClientFromToken(tokenOf(req));
 
-    // Legacy plan gate (unchanged semantics — fixed later by the usage service)
-    const limitError = planLimitError(user, "pullRequests");
-    if (limitError) return res.status(402).json(limitError);
+    // Usage reservation — atomic gate, ALL plans count PR reviews now
+    // (removes the legacy starter-only counting quirk). Released if the
+    // review fails so an error never consumes the monthly slot.
+    const reservation = await reserve(user._id, "pr-review", { plan: user.plan });
+    if (!reservation.ok) {
+      return res.status(402).json(
+        limitReachedError(user.plan, "pr-review", reservation.used ?? reservation.limit),
+      );
+    }
 
     try {
       // AI gateway review (retries, schema gate, cost tracking) — extracted
       // to service so the webhook-triggered job worker (C9) reuses it.
       const issues = await reviewPullRequest({ owner, repo, number, gh, userId: String(user._id) });
 
-      // Legacy behavior kept intentionally: starter plan counts usage here.
-      // This will be replaced by the single-atomic-counter usage service.
-      if (user.plan === "starter") {
-        await User.findByIdAndUpdate(String(user._id), { $inc: { pullRequestsUsed: 1 } });
-      }
-
       return res.json({ issues });
     } catch (error) {
+      await release(user._id, "pr-review");
       if (error instanceof AppError) {
         return res.status(error.status).json({ message: error.message });
       }
@@ -187,11 +187,10 @@ reviewsRouter.put(
   requireAuth,
   async (req: Request, res: Response) => {
     const { owner, repo, number } = req.params;
-    const user = req.user!;
     const gh = githubClientFromToken(tokenOf(req));
 
-    const limitError = planLimitError(user, "pullRequests");
-    if (limitError) return res.status(402).json(limitError);
+    // NOTE: merging a PR is NOT a review action — it consumes no quota.
+    // (The legacy limit gate + doc counter that lived here are gone.)
 
     try {
       let branchName = "";
@@ -217,9 +216,6 @@ reviewsRouter.put(
         targetType: "pr",
         targetId: `${owner}/${repo}#${number}`,
       });
-
-      // Legacy: merge counted usage directly on the User doc (fixed later).
-      await User.findByIdAndUpdate(user._id, { $inc: { pullRequestsUsed: 1 } });
 
       return res.json({ message: "PR merged and branch cleaned up successfully" });
     } catch (error) {

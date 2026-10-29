@@ -98,7 +98,7 @@ authRouter.get("/auth/user", async (req: Request, res: Response) => {
     if (!user) {
       return res.json({ authenticated: false });
     }
-    return res.json({ authenticated: true, user: sanitizeUser(user as unknown as Record<string, unknown>) });
+    return res.json({ authenticated: true, user: await sanitizeUser(user as unknown as Record<string, unknown>) });
   } catch {
     return res.json({ authenticated: false });
   }

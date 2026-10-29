@@ -6,7 +6,7 @@ import { recordAuditLog } from "../../middleware/auditLog";
 import { githubClientFromToken, GitHubApiError } from "../../integrations/github/client";
 import { logger } from "../../config/logger";
 import { Audit, type AuditDocument } from "../../models/Audit";
-import { planLimitError } from "../usage/limits";
+import { reserve, release, limitReachedError } from "../usage/service";
 import { enqueue } from "../jobs/queue";
 import {
   applyFixesAndCreatePR,
@@ -58,19 +58,28 @@ auditsRouter.post("/repos/:owner/:repo/audit", requireAuth, async (req: Request,
   const { branch: requestedBranch } = (req.body ?? {}) as { branch?: string };
   const user = req.user!;
 
-  // Plan enforcement (legacy check — replaced by the usage service in a later commit)
-  const limitError = planLimitError(user, "audits");
-  if (limitError) {
-    return res.status(402).json(limitError);
+  // Usage reservation (atomic conditional $inc — racing requests can never
+  // over-consume the plan's monthly slot). The worker REFUNDS it if the job
+  // permanently fails, so failed audits no longer consume quota.
+  const reservation = await reserve(user._id, "audit", { plan: user.plan });
+  if (!reservation.ok) {
+    return res.status(402).json(
+      limitReachedError(user.plan, "audit", reservation.used ?? reservation.limit),
+    );
   }
 
-  // Usage counting happens in the WORKER on success, so failed audits no
-  // longer consume quota (aligned with C8's refund-on-failure semantics).
-  const job = await enqueue({
-    type: "repo-audit",
-    userId: user._id,
-    payload: { owner, repo, requestedBranch },
-  });
+  let job;
+  try {
+    job = await enqueue({
+      type: "repo-audit",
+      userId: user._id,
+      payload: { owner, repo, requestedBranch },
+    });
+  } catch (err) {
+    // Nothing was queued — give the reserved slot back.
+    await release(user._id, "audit");
+    throw err;
+  }
 
   recordAuditLog(req, {
     action: "repo.audit.queued",

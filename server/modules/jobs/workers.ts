@@ -5,7 +5,7 @@ import { generateInsightsReport } from "../reports/service";
 import { githubClientFromToken } from "../../integrations/github/client";
 import { AppError } from "../../middleware/errorHandler";
 import { logger } from "../../config/logger";
-import { User } from "../../models/User";
+import { release, type UsageAction } from "../usage/service";
 import { mongoQueue, type JobQueueAdapter } from "./queue";
 import type { JobDocument, JobType } from "./model";
 
@@ -54,9 +54,16 @@ async function requireGithubToken(userId: string): Promise<string> {
   return token;
 }
 
-// NOTE: usage counting is done HERE on success (not at enqueue) so failed
-// audits/reviews no longer consume plan quota (refines legacy semantics; the
-// atomic single-counter usage service in C8 builds on this).
+/** Which usage reservation each job type consumed (null = not counted). */
+const USAGE_ACTION_BY_JOB: Record<JobType, UsageAction | null> = {
+  "repo-audit": "audit",
+  "pr-review": "pr-review",
+  "report-insights": null,
+};
+
+// NOTE: usage is RESERVED at route/enqueue time (server/modules/usage) — the
+// workers never increment. Their only finance duty is the REFUND below:
+// a job that permanently fails releases its reservation.
 const HANDLERS: Record<JobType, Handler> = {
   "repo-audit": async (job, deps) => {
     const { owner, repo, requestedBranch } = payloadAs<{ owner: string; repo: string; requestedBranch?: string }>(job.payload);
@@ -72,8 +79,6 @@ const HANDLERS: Record<JobType, Handler> = {
       userId,
       onProgress: snapshot => deps.queue.setProgress(job._id, snapshot),
     });
-
-    await User.findByIdAndUpdate(userId, { $inc: { auditsUsed: 1 } });
 
     return {
       auditId: result.auditId,
@@ -94,12 +99,6 @@ const HANDLERS: Record<JobType, Handler> = {
     const gh = githubClientFromToken(token);
 
     const issues = await reviewPullRequest({ owner, repo, number, gh, userId, jobId: String(job._id) });
-
-    // Legacy semantics preserved: starter plan counted PR reviews on success.
-    const user = (await User.findById(userId, null, { lean: true })) as { plan?: string } | null;
-    if (user?.plan === "starter") {
-      await User.findByIdAndUpdate(userId, { $inc: { pullRequestsUsed: 1 } });
-    }
 
     return { issues, count: issues.length };
   },
@@ -190,6 +189,11 @@ async function processJob(job: ClaimableJob, deps: WorkerDeps): Promise<void> {
     const updated = await deps.queue.fail(job._id, message);
     if (updated && updated.state === "failed") {
       logger.error({ jobId: String(job._id), type: job.type, err: message }, "job permanently failed");
+      // Refund the reservation — permanently failed work never consumes quota.
+      const action = USAGE_ACTION_BY_JOB[job.type];
+      if (action) {
+        await release(job.userId, action);
+      }
     } else {
       logger.warn(
         { jobId: String(job._id), type: job.type, err: message, attempt: job.attempts, retryAt: updated?.runAt },

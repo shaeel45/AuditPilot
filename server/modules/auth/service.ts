@@ -2,6 +2,7 @@ import { encryptSecret, decryptSecret } from "../../lib/crypto";
 import { ENV } from "../../config/env";
 import jwt from "jsonwebtoken";
 import { User, type UserDocument } from "../../models/User";
+import { usageForSanitizedUser } from "../usage/service";
 
 /**
  * Resolves the decrypted GitHub token for a user WITHOUT a request object
@@ -107,8 +108,13 @@ export function createSessionToken(user: UserDocument): string {
   return jwt.sign({ userId: user._id }, ENV.JWT_SECRET as string, { expiresIn: "7d" });
 }
 
-/** Fields safe to send to clients. Token fields are NEVER included. */
-export function sanitizeUser(user: UserDocument | Record<string, unknown>) {
+/**
+ * Fields safe to send to clients. Token fields are NEVER included.
+ * Usage counts come from the monthly usage LEDGER under the legacy field
+ * names (auditsUsed / pullRequestsUsed) so the client contract is unchanged.
+ */
+export async function sanitizeUser(user: UserDocument | Record<string, unknown>) {
+  const usage = await usageForSanitizedUser(String(user._id));
   return {
     _id: user._id,
     username: user.username,
@@ -116,7 +122,7 @@ export function sanitizeUser(user: UserDocument | Record<string, unknown>) {
     avatarUrl: user.avatarUrl ?? null,
     email: user.email ?? null,
     plan: user.plan,
-    auditsUsed: user.auditsUsed ?? 0,
-    pullRequestsUsed: user.pullRequestsUsed ?? 0,
+    auditsUsed: usage.auditsUsed,
+    pullRequestsUsed: usage.pullRequestsUsed,
   };
 }

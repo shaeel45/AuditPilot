@@ -132,6 +132,24 @@ billingRouter.post("/billing/webhook", async (req: Request, res: Response) => {
       }
       break;
     }
+    case "customer.subscription.updated": {
+      // Portal-driven subscription changes: a subscription that is no longer
+      // active (past_due / unpaid / canceled) reverting to starter. We do NOT
+      // change the plan on active/trialing statuses — keep what checkout set.
+      const subscription = event.data.object as { customer: string; status: string };
+      const stillActive = subscription.status === "active" || subscription.status === "trialing";
+      if (!stillActive) {
+        await User.findOneAndUpdate(
+          { stripeCustomerId: subscription.customer },
+          { plan: "starter" },
+        );
+        logger.info(
+          { customerId: subscription.customer, status: subscription.status },
+          "subscription no longer active — plan reverted to starter",
+        );
+      }
+      break;
+    }
     case "customer.subscription.deleted": {
       const subscription = event.data.object as { customer: string };
       await User.findOneAndUpdate(
