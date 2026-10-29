@@ -112,14 +112,15 @@ export const api = {
     return res.json();
   },
 
-  async applyFixes(owner: string, repo: string, auditId: string, branch: string) {
-    const res = await fetch(`${API_BASE}/api/repos/${owner}/${repo}/apply-fix`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ auditId, branch }),
-      ...cred,
-    });
-    if (!res.ok) throw new Error("Failed to apply fixes");
+  /**
+   * REAL per-item current code for the fix-review UI (never the AI's stale
+   * snapshot). Server fetches each referenced file once and locates the
+   * anchored snippet.
+   */
+  async getFixPreview(auditId: string, owner: string, repo: string, branch?: string) {
+    const params = new URLSearchParams({ owner, repo, ...(branch ? { branch } : {}) });
+    const res = await fetch(`${API_BASE}/api/audits/${auditId}/fix-preview?${params}`, { ...cred });
+    if (!res.ok) throw new Error("Failed to load current file contents — showing AI quotes as fallback");
     return res.json();
   },
 
@@ -145,7 +146,10 @@ export const api = {
       method: "PUT",
       ...cred,
     });
-    if (!res.ok) throw new Error("Failed to merge pull request");
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({} as { message?: string }));
+      throw new Error(body.message || "Failed to merge pull request");
+    }
     return res.json();
   },
 

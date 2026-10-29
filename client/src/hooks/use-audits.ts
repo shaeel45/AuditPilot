@@ -186,12 +186,67 @@ export function useApplyFix() {
                 body: JSON.stringify({ issues, targetBranch }),
                 credentials: "include"
             });
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}) as { message?: string; details?: unknown });
+                const detail = Array.isArray(body.details) && body.details.length > 0
+                    ? ` (${String(body.details[0]?.reason ?? "")})`
+                    : "";
+                throw new Error(`${body.message || "Failed to create pull request"}${detail}`);
+            }
             return res.json();
         },
         onSuccess: (data: any) => {
             toast({
                 title: "Success",
                 description: `Created Pull Request successfully!`,
+            });
+        },
+        onError: (error: unknown) => {
+            toast({
+                title: "Pull Request Failed",
+                description: error instanceof Error ? error.message : "Failed to create the pull request",
+                variant: "destructive",
+            });
+        },
+    });
+}
+
+/** Per-item REAL current code + match status for the fix-review UI. */
+export function useFixPreview(
+    auditId: string | undefined,
+    owner: string | undefined,
+    repo: string | undefined,
+) {
+    return useQuery({
+        queryKey: ["fix-preview", auditId, owner, repo],
+        queryFn: async () => {
+            if (!auditId || !owner || !repo) return null;
+            return api.getFixPreview(auditId, owner, repo);
+        },
+        enabled: !!auditId && !!owner && !!repo,
+        retry: false,
+    });
+}
+
+/** In-app squash merge of the created PR. */
+export function useMergePr(owner: string, repo: string, number: string) {
+    const { toast } = useToast();
+
+    return useMutation({
+        mutationFn: async () => {
+            return api.mergePull(owner, repo, number);
+        },
+        onSuccess: () => {
+            toast({
+                title: "Merged",
+                description: `Pull Request #${number} was merged (squash).`,
+            });
+        },
+        onError: (error: unknown) => {
+            toast({
+                title: "Merge Failed",
+                description: error instanceof Error ? error.message : "The pull request could not be merged",
+                variant: "destructive",
             });
         },
     });

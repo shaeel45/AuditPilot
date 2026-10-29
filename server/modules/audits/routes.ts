@@ -11,6 +11,7 @@ import { enqueue } from "../jobs/queue";
 import {
   applyFixesAndCreatePR,
   assertItemAccess,
+  buildFixPreview,
   createAudit,
   createAuditItem,
   deleteAudit,
@@ -103,6 +104,38 @@ auditsRouter.get("/audits/:id", requireAuth, async (req, res) => {
   const audit = await findOwnAuditWithItems(String(req.params.id), String(req.user!._id));
   if (!audit) return res.status(404).json({ message: "Audit not found" });
   return res.json(audit);
+});
+
+// === Fix preview (REAL current code per item, for the review UI) ===
+
+auditsRouter.get("/audits/:id/fix-preview", requireAuth, async (req, res) => {
+  try {
+    const audit = await findOwnAuditWithItems(String(req.params.id), String(req.user!._id));
+    if (!audit) {
+      return res.status(404).json({ message: "Audit not found" });
+    }
+
+    const owner = String(req.query.owner ?? "");
+    const repo = String(req.query.repo ?? "");
+    if (!owner || !repo) {
+      return res.status(400).json({ message: "owner and repo query params are required" });
+    }
+
+    const targetBranch =
+      String(req.query.branch ?? "") || (audit as { branch?: string }).branch || "main";
+
+    const preview = await buildFixPreview({
+      owner,
+      repo,
+      auditId: String(audit._id),
+      targetBranch,
+      items: (audit.items ?? []) as unknown as Array<Record<string, unknown>>,
+      gh: githubClientFromToken(tokenOf(req)),
+    });
+    return res.json(preview);
+  } catch (error) {
+    return handleError(error, res, "fix preview error");
+  }
 });
 
 auditsRouter.post("/audits", requireAuth, async (req, res) => {

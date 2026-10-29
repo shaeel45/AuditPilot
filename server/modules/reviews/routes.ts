@@ -206,8 +206,8 @@ reviewsRouter.put(
         merge_method: "squash",
       });
 
-      if (branchName && branchName.startsWith("audit-")) {
-        logger.info({ branchName }, "deleting temporary audit branch");
+      if (branchName && (branchName.startsWith("audit-") || branchName.startsWith("auditpilot-fix-"))) {
+        logger.info({ branchName }, "deleting temporary fix branch");
         await gh.del(`/repos/${owner}/${repo}/git/refs/heads/${branchName}`);
       }
 

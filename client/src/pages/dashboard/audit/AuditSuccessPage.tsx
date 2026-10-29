@@ -1,15 +1,28 @@
-import React from "react";
+import React, { useState } from "react";
 import { motion } from "framer-motion";
-import { CheckCircle2, Github, ArrowRight, ExternalLink } from "lucide-react";
+import { CheckCircle2, Github, ArrowRight, ExternalLink, GitMerge, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useLocation, useParams } from "wouter";
 import DashboardLayout from "../DashboardLayout";
+import { useMergePr } from "@/hooks/use-audits";
 
 export default function AuditSuccessPage() {
-  const { owner, repo, prNumber } = useParams<{ owner: string, repo: string, prNumber: string }>();
+  const { owner = "", repo = "", prNumber = "pr" } = useParams<{ owner: string, repo: string, prNumber: string }>();
   const [, setLocation] = useLocation();
   const searchParams = new URLSearchParams(window.location.search);
   const prUrl = searchParams.get("url");
+
+  const mergeMutation = useMergePr(owner ?? "", repo ?? "", prNumber);
+  const [confirmMerge, setConfirmMerge] = useState(false);
+  const [merged, setMerged] = useState(false);
+
+  const handleMerge = () => {
+    if (!confirmMerge) {
+      setConfirmMerge(true);
+      return;
+    }
+    mergeMutation.mutate(undefined, { onSuccess: () => setMerged(true) });
+  };
 
   return (
     <DashboardLayout>
@@ -23,7 +36,28 @@ export default function AuditSuccessPage() {
           Your security and performance fixes have been applied to a new branch and a Pull Request <span className="text-slate-900 font-mono font-bold">#{prNumber}</span> has been opened against <span className="font-semibold text-slate-900">{repo}</span>.
         </p>
 
-        <div className="flex flex-col sm:flex-row gap-4 justify-center w-full max-w-sm">
+        <div className="flex flex-col sm:flex-row gap-4 justify-center w-full max-w-lg">
+          {!merged && (
+            <Button
+              size="lg"
+              onClick={handleMerge}
+              disabled={mergeMutation.isPending}
+              className="bg-green-600 hover:bg-green-700 text-white h-14 px-8 font-bold shadow-lg shadow-green-500/20"
+            >
+              {mergeMutation.isPending ? (
+                <Loader2 className="w-5 h-5 mr-3 animate-spin" />
+              ) : (
+                <GitMerge className="w-5 h-5 mr-3" />
+              )}
+              {confirmMerge ? "Confirm merge now" : "Merge this PR"}
+            </Button>
+          )}
+          {merged && (
+            <div className="flex items-center justify-center h-14 px-8 rounded-md bg-green-50 border border-green-200 text-green-700 font-bold">
+              <CheckCircle2 className="w-5 h-5 mr-3" /> Merged — fixes are on {repo || "the repo"}
+            </div>
+          )}
+
           {prUrl ? (
             <Button asChild size="lg" className="bg-black hover:bg-slate-800 text-white h-14 px-8 font-bold shadow-lg">
               <a href={decodeURIComponent(prUrl)} target="_blank" rel="noopener noreferrer">
@@ -46,6 +80,12 @@ export default function AuditSuccessPage() {
             <ArrowRight className="w-5 h-5 ml-2 opacity-50" />
           </Button>
         </div>
+
+        {confirmMerge && !merged && (
+          <p className="text-xs text-slate-400 mt-4">
+            Squash-merges the PR into its base branch and removes the temporary fix branch.
+          </p>
+        )}
 
         <div className="mt-16 p-6 bg-slate-50 rounded-2xl border border-slate-100 max-w-lg w-full">
            <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mb-3">Next Steps</p>

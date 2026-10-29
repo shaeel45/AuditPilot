@@ -272,6 +272,37 @@ export async function runRepoAudit(input: RepoAuditInput): Promise<RepoAuditResu
 
 // --- Fix application ------------------------------------------------------
 
+export interface CodeLocation {
+  /** Line number (1-based) of the first line of the matched snippet. */
+  line: number;
+  /** true when the file contains the snippet verbatim; false = whitespace-normalized match. */
+  exact: boolean;
+}
+
+/**
+ * Locates `oldCode` inside current file content: exact substring first, then
+ * the same whitespace-flexible pattern applyReplacement uses. Returns null
+ * when neither matches (the fix cannot be anchored to the live file).
+ */
+export function locateCode(content: string, oldCode: string): CodeLocation | null {
+  if (!oldCode || !oldCode.trim()) return null;
+  const exactIdx = content.indexOf(oldCode);
+  if (exactIdx >= 0) {
+    return { line: content.slice(0, exactIdx).split("\n").length, exact: true };
+  }
+  const escaped = oldCode.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+  try {
+    const regex = new RegExp(escaped);
+    const match = regex.exec(content);
+    if (match) {
+      return { line: content.slice(0, match.index).split("\n").length, exact: false };
+    }
+  } catch {
+    // malformed pattern — treat as not found
+  }
+  return null;
+}
+
 /** Whitespace-flexible single-replacing of old→new; returns null if no match. */
 export function applyReplacement(currentContent: string, oldCode: string, newCode: string): string | null {
   if (currentContent.includes(oldCode)) {
@@ -311,6 +342,111 @@ export interface ApplyFixResult {
   modifiedFiles: number;
 }
 
+export interface ApplyFixResult {
+  prUrl: string;
+  prNumber: number;
+  branch: string;
+  modifiedFiles: number;
+  appliedIssues: number;
+  /** Issues that could not be anchored to a file, with reasons. */
+  skipped: Array<{ file: string; reason: string }>;
+}
+
+/** Bounded snapshot of current file content for the review UI. */
+const MAX_PREVIEW_LINES = 1500;
+
+export interface FixPreviewResult {
+  auditId: string;
+  /** Branch the preview (and the PR) is based on. */
+  branch: string;
+  /** path → bounded current content. */
+  files: Record<string, { content: string; truncated: boolean; totalLines: number }>;
+  items: Array<{
+    itemId: string;
+    label: string;
+    type: string;
+    severity: string;
+    file: string | null;
+    oldCode: string | null;
+    newCode: string | null;
+    /** null = snippet not found in the current file / file unreadable. */
+    match: { line: number; exact: boolean } | null;
+  }>;
+}
+
+/**
+ * Builds per-item REAL current-code context for the fix-review UI — the UI
+ * always shows the live file content, never the AI's stale quote. Each
+ * unique file is fetched once; content is capped so big repositories don't
+ * blow up the payload.
+ */
+export async function buildFixPreview(input: {
+  owner: string;
+  repo: string;
+  auditId: string;
+  targetBranch: string;
+  items: Array<Record<string, unknown>>;
+  gh: GitHubClient;
+}): Promise<FixPreviewResult> {
+  const { owner, repo, auditId, targetBranch, items, gh } = input;
+
+  const fileToPath = (item: Record<string, unknown>): string | null => {
+    const value = typeof item.value === "string" ? item.value.trim() : "";
+    const file = typeof item.file === "string" ? item.file.trim() : "";
+    return (value && value) || (file && file) || null;
+  };
+
+  // Unique file paths across all items
+  const paths = Array.from(new Set(items.map(fileToPath).filter((p): p is string => !!p)));
+
+  // Fetch each referenced file once
+  const contents = new Map<string, string>();
+  for (const p of paths) {
+    try {
+      const fileData = await gh.get<{ content: string }>(
+        `/repos/${owner}/${repo}/contents/${p}?ref=${encodeURIComponent(targetBranch)}`,
+      );
+      contents.set(p, Buffer.from(fileData.content, "base64").toString("utf-8"));
+    } catch {
+      // unreadable file — item renders with match: null (no usable anchor)
+      contents.set(p, "");
+    }
+  }
+
+  const files: FixPreviewResult["files"] = {};
+  for (const [p, content] of Array.from(contents.entries())) {
+    const totalLines = content ? content.split("\n").length : 0;
+    const lines = content.split("\n");
+    files[p] = {
+      content: lines.slice(0, MAX_PREVIEW_LINES).join("\n"),
+      truncated: totalLines > MAX_PREVIEW_LINES,
+      totalLines,
+    };
+  }
+
+  return {
+    auditId,
+    branch: targetBranch,
+    files,
+    items: items.map(item => {
+      const filePath = fileToPath(item);
+      const oldCode = typeof item.old_code === "string" ? item.old_code : null;
+      const newCode = typeof item.new_code === "string" ? item.new_code : null;
+      const content = filePath ? contents.get(filePath) ?? "" : "";
+      return {
+        itemId: String(item._id),
+        label: typeof item.label === "string" ? item.label : "Issue",
+        type: typeof item.type === "string" ? item.type : "issue",
+        severity: typeof item.severity === "string" ? item.severity : "medium",
+        file: filePath,
+        oldCode,
+        newCode,
+        match: oldCode ? locateCode(content, oldCode) : null,
+      };
+    }),
+  };
+}
+
 export async function applyFixesAndCreatePR(input: ApplyFixInput): Promise<ApplyFixResult> {
   const { owner, repo, targetBranch, issues, gh } = input;
 
@@ -322,51 +458,86 @@ export async function applyFixesAndCreatePR(input: ApplyFixInput): Promise<Apply
     sha: baseSha,
   });
 
-  let modifiedFilesCount = 0;
+  // Group issues by file: read each file ONCE, apply all its substitutions
+  // cumulatively, then make a SINGLE commit per changed file (instead of one
+  // commit per issue).
+  const perFile = new Map<string, { content: string; sha: string }>();
+  const changed = new Set<string>();
+  const skipped: Array<{ file: string; reason: string }> = [];
+
   for (const issue of issues) {
     const oldCode = issue.fix?.old_code || (issue.old_code as string);
     const newCode = issue.fix?.new_code || (issue.new_code as string);
-    const filePath = (issue.file as string) || (issue.file_path as string) || (issue.path as string);
-    if (!oldCode || !newCode || !filePath) continue;
-
-    let currentContent: string;
-    let fileSha: string;
-    try {
-      const fileData = await gh.get<{ content: string; sha: string }>(
-        `/repos/${owner}/${repo}/contents/${filePath}?ref=${newBranchName}`,
-      );
-      currentContent = Buffer.from(fileData.content, "base64").toString("utf-8");
-      fileSha = fileData.sha;
-    } catch {
-      logger.warn({ filePath }, "skipping fix — file not readable on new branch");
+    const filePath =
+      (issue.file as string) || (issue.file_path as string) || (issue.path as string) || (issue.value as string);
+    if (!oldCode || !newCode || !filePath) {
+      skipped.push({ file: filePath || "?", reason: "incomplete fix data — missing old/new code or file path" });
       continue;
     }
 
-    const newContent = applyReplacement(currentContent, oldCode, newCode);
-    if (newContent) {
+    let ctx = perFile.get(filePath);
+    if (!ctx) {
+      try {
+        const fileData = await gh.get<{ content: string; sha: string }>(
+          `/repos/${owner}/${repo}/contents/${filePath}?ref=${newBranchName}`,
+        );
+        ctx = {
+          content: Buffer.from(fileData.content, "base64").toString("utf-8"),
+          sha: fileData.sha,
+        };
+        perFile.set(filePath, ctx);
+      } catch {
+        skipped.push({ file: filePath, reason: "file not found on the target branch" });
+        continue;
+      }
+    }
+
+    const next = applyReplacement(ctx.content, oldCode, newCode);
+    if (!next) {
+      skipped.push({
+        file: filePath,
+        reason: "the issue's quoted code no longer matches the current file (version or whitespace drift)",
+      });
+      continue;
+    }
+    ctx.content = next;
+    changed.add(filePath);
+  }
+
+  let modifiedFilesCount = 0;
+  for (const filePath of Array.from(changed)) {
+    const ctx = perFile.get(filePath)!;
+    try {
       await gh.put(`/repos/${owner}/${repo}/contents/${filePath}`, {
-        message: `AuditPilot: Fix issue in ${filePath}`,
-        content: Buffer.from(newContent).toString("base64"),
-        sha: fileSha,
+        message: `AuditPilot: apply fixes in ${filePath}`,
+        content: Buffer.from(ctx.content).toString("base64"),
+        sha: ctx.sha,
         branch: newBranchName,
       });
       modifiedFilesCount++;
-    } else {
-      logger.warn({ filePath }, "AI-suggested code did not match current file content — skipped");
+    } catch (err) {
+      skipped.push({ file: filePath, reason: `commit failed: ${(err as Error).message}` });
     }
   }
 
+  const appliedIssues = issues.length - skipped.length;
   if (modifiedFilesCount === 0) {
     throw AppError.badRequest(
-      "No changes were applied. The AI-suggested code snippets did not match the current file contents exactly. This usually happens due to whitespace or version differences.",
+      "No changes could be applied — none of the issue snippets matched the current files. Review and edit the fixes, or refresh the preview (the repository may have moved on).",
+      skipped,
     );
   }
 
   const createdPR = await gh.post<{ html_url: string; number: number }>(`/repos/${owner}/${repo}/pulls`, {
     title: "AuditPilot: Fix security and performance issues",
-    body: `This PR applies automated fixes for issues identified during the AI audit.\n\nIssues fixed:\n${issues
-      .map(i => `- ${String(i.description || "Issue Detected")}`)
-      .join("\n")}`,
+    body: [
+      "This PR applies automated fixes for issues identified during the AI audit.",
+      "",
+      `**Applied:** ${appliedIssues} issue(s) across ${modifiedFilesCount} file(s)`,
+      ...(skipped.length
+        ? ["", `**Skipped (${skipped.length}):**`, ...skipped.slice(0, 15).map(s => `- \`${s.file}\` — ${s.reason}`)]
+        : []),
+    ].join("\n"),
     head: newBranchName,
     base: targetBranch,
   });
@@ -376,5 +547,7 @@ export async function applyFixesAndCreatePR(input: ApplyFixInput): Promise<Apply
     prNumber: createdPR.number,
     branch: newBranchName,
     modifiedFiles: modifiedFilesCount,
+    appliedIssues,
+    skipped,
   };
 }

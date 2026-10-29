@@ -28,9 +28,10 @@ export default function FixConfirmationPage() {
     })).filter((i: any) => i.new_code);
 
     fixMutation.mutate({ owner, repo, issues, targetBranch }, {
-      onSuccess: (data) => {
-        const prNumber = data.html_url.split('/').pop();
-        setLocation(`/app/audit/${owner}/${repo}/success/${prNumber}?url=${encodeURIComponent(data.html_url)}`);
+      onSuccess: (data: any) => {
+        const prNumber = data.prNumber ?? data.number ?? data.html_url?.split('/').pop();
+        const url = data.prUrl ?? data.html_url;
+        setLocation(`/app/audit/${owner}/${repo}/success/${prNumber}?url=${encodeURIComponent(url)}`);
       }
     });
   };
