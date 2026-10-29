@@ -15,11 +15,9 @@ export default function Pricing() {
     try {
       const response = await fetch("/api/billing/create-checkout-session", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${localStorage.getItem("audit_token")}`
-        },
-        body: JSON.stringify({ plan: plan.toLowerCase() })
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan: plan.toLowerCase() }),
+        credentials: "include"
       });
 
       if (!response.ok) {

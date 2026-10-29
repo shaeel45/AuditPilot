@@ -5,7 +5,12 @@ import OpenAI from "openai";
 import { User } from "./models/User";
 import type { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
+import { randomBytes } from "node:crypto";
 import { stripe, STRIPE_PRICE_IDS, LIMITS, PLANS } from "./lib/stripe";
+import { requireAuth, setAuthCookie, clearAuthCookie } from "./middleware/auth";
+import { safeEqual } from "./lib/crypto";
+import { encryptSecret } from "./lib/crypto";
+import { ENV, isProd } from "./config/env";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -43,42 +48,48 @@ export async function registerRoutes(
     }
   }
 
-  // Middleware to protect routes
-  async function requireAuth(req: Request, res: Response, next: NextFunction) {
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith("Bearer ")) {
-      return res.status(401).json({ message: "Unauthorized: Missing or invalid token" });
-    }
-
-    const token = authHeader.split(" ")[1];
-    try {
-      const decoded: any = jwt.verify(token, process.env.JWT_SECRET || "audit-pilot-secret");
-      const user = await User.findById(decoded.userId);
-      if (!user) {
-        return res.status(401).json({ message: "Unauthorized: User not found" });
-      }
-      (req as any).user = user;
-      (req as any).githubAccessToken = user.accessToken;
-      next();
-    } catch (err) {
-      return res.status(401).json({ message: "Unauthorized: Invalid token" });
-    }
-  }
+  // Middleware to protect routes (now lives in server/middleware/auth.ts)
+  void requireAuth;
 
   // === Auth Routes ===
 
   app.get("/api/auth/github", (req, res) => {
     const clientId = process.env.GITHUB_CLIENT_ID;
+    if (!clientId) {
+      return res.status(500).json({ message: "GITHUB_CLIENT_ID is not configured" });
+    }
     const redirectUri = process.env.GITHUB_REDIRECT_URI || `${req.protocol}://${req.get("host")}/api/auth/github/callback`;
-    const scope = "repo read:user";
-    const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}`;
+
+    // OAuth state: CSRF protection for the redirect dance
+    const state = randomBytes(16).toString("hex");
+    res.cookie("gh_oauth_state", state, {
+      httpOnly: true,
+      secure: isProd,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 10 * 60 * 1000,
+    });
+
+    const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=repo%20read:user&state=${state}`;
     res.redirect(githubAuthUrl);
   });
 
   app.get("/api/auth/github/callback", async (req, res) => {
-    const { code } = req.query;
+    const { code, state } = req.query;
     const clientId = process.env.GITHUB_CLIENT_ID;
     const clientSecret = process.env.GITHUB_CLIENT_SECRET;
+
+    // 1. Verify the state cookie against the state param (CSRF)
+    const cookieState = (req.cookies?.gh_oauth_state as string) || "";
+    if (
+      !state ||
+      typeof state !== "string" ||
+      !cookieState ||
+      !safeEqual(state, cookieState)
+    ) {
+      return res.status(403).send("OAuth state validation failed. Please restart sign-in.");
+    }
+    res.clearCookie("gh_oauth_state", { path: "/" });
 
     try {
       const tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
@@ -97,19 +108,23 @@ export async function registerRoutes(
 
       const tokenData: any = await tokenResponse.json();
       if (tokenData.access_token) {
-        const token = tokenData.access_token;
+        const rawToken: string = tokenData.access_token;
+        const encryptedToken = encryptSecret(rawToken);
 
         // Fetch user profile from GitHub to store in MongoDB
         const userProfileResponse = await fetch("https://api.github.com/user", {
           headers: {
-            Authorization: `token ${token}`,
+            Authorization: `token ${rawToken}`,
             Accept: "application/vnd.github.v3+json",
             "User-Agent": "Audit-Pilot-App"
           },
         });
         const profile = await userProfileResponse.json();
+        if (!profile?.id) {
+          return res.status(401).send("Failed to verify GitHub profile");
+        }
 
-        // Sync with MongoDB
+        // Sync with MongoDB — token stored ENCRYPTED, never plaintext
         const user = await User.findOneAndUpdate(
           { githubId: profile.id.toString() },
           {
@@ -117,25 +132,22 @@ export async function registerRoutes(
             displayName: profile.name || profile.login,
             avatarUrl: profile.avatar_url,
             email: profile.email,
-            accessToken: token, // Optional: keep for background tasks
+            accessTokenEncrypted: encryptedToken,
+            $unset: { accessToken: 1 },
             lastLogin: new Date(),
-            $setOnInsert: {
-              plan: 'starter',
-              auditsUsed: 0,
-              pullRequestsUsed: 0
-            }
           },
           { upsert: true, new: true }
         );
 
-        // Sign JWT
+        // Sign JWT — delivered ONLY via httpOnly cookie, never in a URL
         const jwtToken = jwt.sign(
           { userId: user._id },
-          process.env.JWT_SECRET || "audit-pilot-secret",
+          ENV.JWT_SECRET as string,
           { expiresIn: "7d" }
         );
+        setAuthCookie(res, jwtToken);
 
-        res.redirect(`/app?token=${jwtToken}`);
+        res.redirect(`/app`);
       } else {
         res.status(401).json({ message: "Failed to obtain access token" });
       }
@@ -146,22 +158,42 @@ export async function registerRoutes(
   });
 
   app.get("/api/auth/logout", (req, res) => {
+    clearAuthCookie(res);
     res.json({ message: "Logged out successfully" });
   });
 
   app.get("/api/auth/user", async (req, res) => {
-    // Check for Authorization header
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith("Bearer ")) {
+    // Silent auth check: cookie first, Bearer fallback — never 401s (returns JSON flag)
+    const bearer = req.headers.authorization?.startsWith("Bearer ")
+      ? (req.headers.authorization as string).split(" ")[1]
+      : undefined;
+    const tokenCandidate =
+      bearer ||
+      ((req as unknown as { cookies?: Record<string, string> }).cookies?.["audit_token"] as
+        | string
+        | undefined);
+    if (!tokenCandidate) {
       return res.json({ authenticated: false });
     }
 
-    const token = authHeader.split(" ")[1];
     try {
-      const decoded: any = jwt.verify(token, process.env.JWT_SECRET || "audit-pilot-secret");
+      const decoded: any = jwt.verify(tokenCandidate, ENV.JWT_SECRET as string);
       const user = await User.findById(decoded.userId);
       if (user) {
-        res.json({ authenticated: true, user });
+        // Sanitized — NEVER return token fields, even encrypted ones
+        res.json({
+          authenticated: true,
+          user: {
+            _id: user._id,
+            username: user.username,
+            displayName: user.displayName,
+            avatarUrl: user.avatarUrl,
+            email: user.email,
+            plan: user.plan,
+            auditsUsed: user.auditsUsed,
+            pullRequestsUsed: user.pullRequestsUsed,
+          },
+        });
       } else {
         res.json({ authenticated: false });
       }
@@ -1064,14 +1096,16 @@ export async function registerRoutes(
     const sig = req.headers['stripe-signature'];
     const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
+    if (!webhookSecret) {
+      // Never accept unsigned payloads — a missing secret is a misconfiguration.
+      console.error("STRIPE_WEBHOOK_SECRET is not configured — rejecting webhook");
+      return res.status(503).json({ message: "Stripe webhook not configured" });
+    }
+
     let event;
 
     try {
-      if (webhookSecret) {
-        event = stripe.webhooks.constructEvent(req.rawBody as any, sig as string, webhookSecret);
-      } else {
-        event = req.body;
-      }
+      event = stripe.webhooks.constructEvent(req.rawBody as any, sig as string, webhookSecret);
     } catch (err: any) {
       console.error(`Webhook Error: ${err.message}`);
       return res.status(400).send(`Webhook Error: ${err.message}`);
@@ -1118,7 +1152,13 @@ export async function registerRoutes(
 
     try {
       const session = await stripe.checkout.sessions.retrieve(sessionId);
-      
+
+      // Ownership check: the session must belong to the requesting user
+      // (prevents plan escalation using another account's paid session id)
+      if (session.metadata?.userId !== String(user._id)) {
+        return res.status(403).json({ message: "This checkout session does not belong to you" });
+      }
+
       if (session.payment_status === 'paid') {
         const plan = session.metadata?.plan;
         const subscriptionId = session.subscription as string;

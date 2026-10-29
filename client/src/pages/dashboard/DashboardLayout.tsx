@@ -14,9 +14,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const handleLogout = async () => {
     try {
-      localStorage.removeItem("audit_token");
+      await fetch("/api/auth/logout", { credentials: "include" });
       localStorage.removeItem("authenticated");
-      await fetch("/api/auth/logout");
       window.location.href = "/";
     } catch (err) {
       console.error("Logout failed:", err);

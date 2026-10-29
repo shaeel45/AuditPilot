@@ -37,11 +37,9 @@ export function useCreateAudit() {
         mutationFn: async (data: any) => {
             const res = await fetch("/api/audits", {
                 method: "POST",
-                headers: { 
-                    "Content-Type": "application/json",
-                    "Authorization": `Bearer ${localStorage.getItem("audit_token") || ""}`
-                },
-                body: JSON.stringify(data)
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(data),
+                credentials: "include"
             });
             return res.json();
         },
@@ -76,7 +74,7 @@ export function useDeleteAudit() {
         mutationFn: async (id: string) => {
             await fetch(`/api/audits/${id}`, {
                 method: "DELETE",
-                headers: { "Authorization": `Bearer ${localStorage.getItem("audit_token") || ""}` }
+                credentials: "include"
             });
         },
         onSuccess: () => {
@@ -95,11 +93,9 @@ export function useUpdateAuditItem(auditId: string) {
         mutationFn: async ({ id, ...data }: UpdateAuditItemParams) => {
             const res = await fetch(`/api/audit-items/${id}`, {
                 method: "PATCH",
-                headers: { 
-                    "Content-Type": "application/json",
-                    "Authorization": `Bearer ${localStorage.getItem("audit_token") || ""}`
-                },
-                body: JSON.stringify(data)
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(data),
+                credentials: "include"
             });
             return res.json();
         },
@@ -119,7 +115,7 @@ export function useGenerateInsights(auditId: string) {
         mutationFn: async () => {
             const res = await fetch(`/api/audits/${auditId}/generate-insights`, {
                 method: "POST",
-                headers: { "Authorization": `Bearer ${localStorage.getItem("audit_token") || ""}` }
+                credentials: "include"
             });
             return res.json();
         },
@@ -169,11 +165,9 @@ export function useApplyFix() {
         mutationFn: async ({ owner, repo, issues, targetBranch }: { owner: string; repo: string; issues: any[]; targetBranch: string }) => {
             const res = await fetch(`/api/repos/${owner}/${repo}/fix`, {
                 method: "POST",
-                headers: { 
-                    "Content-Type": "application/json",
-                    "Authorization": `Bearer ${localStorage.getItem("audit_token") || ""}`
-                },
-                body: JSON.stringify({ issues, targetBranch })
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ issues, targetBranch }),
+                credentials: "include"
             });
             return res.json();
         },

@@ -6,7 +6,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import Landing from "@/pages/Landing";
 import Auth from "@/pages/Auth";
-import { useEffect } from "react";
 import Pricing from "@/pages/Pricing";
 import HowItWorks from "@/pages/HowItWorks";
 
@@ -62,26 +61,10 @@ function Router() {
 }
 
 function App() {
-  // Capture token immediately on load
-  const params = new URLSearchParams(window.location.search);
-  const token = params.get("token");
-  if (token) {
-    localStorage.setItem("audit_token", token);
-  }
-
-  useEffect(() => {
-    if (token) {
-      // Set intermediate flag to help with redirects
-      localStorage.setItem("authenticated", "true");
-      
-      // Invalidate the auth-status query to force a refresh with the new token
-      queryClient.invalidateQueries({ queryKey: ["auth-status"] });
-      
-      // Clean URL
-      const newUrl = window.location.pathname;
-      window.history.replaceState({}, document.title, newUrl);
-    }
-  }, [token]);
+  // Authentication is now cookie-based (httpOnly JWT set by the login callback).
+  // No token is captured from URLs and nothing auth-sensitive is stored locally.
+  // The "authenticated" localStorage flag is only a UX hint owned by the
+  // auth-status query.
 
   return (
     <QueryClientProvider client={queryClient}>

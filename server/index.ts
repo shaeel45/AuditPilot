@@ -8,6 +8,7 @@ import { ENV, isProd } from "./config/env";
 import { logger } from "./config/logger";
 import { errorHandler } from "./middleware/errorHandler";
 import { requestContext } from "./middleware/requestContext";
+import cookieParser from "cookie-parser";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -32,6 +33,8 @@ app.use(express.json({
 }));
 
 app.use(express.urlencoded({ extended: false }));
+
+app.use(cookieParser());
 
 app.use(requestContext);
 

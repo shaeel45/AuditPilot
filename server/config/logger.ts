@@ -1,5 +1,5 @@
 import pino from "pino";
-import { ENV, isDev } from "./env";
+import { ENV, isDev, isProd } from "./env";
 
 /**
  * Structured logger.

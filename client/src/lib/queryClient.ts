@@ -1,5 +1,9 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
+/**
+ * All API calls are cookie-authenticated: the server sets an httpOnly JWT
+ * cookie at login; no token is ever stored client-side.
+ */
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     const text = (await res.text()) || res.statusText;
@@ -12,17 +16,13 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
-  const token = localStorage.getItem("audit_token") || new URLSearchParams(window.location.search).get("token");
   const headers: Record<string, string> = data ? { "Content-Type": "application/json" } : {};
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
 
   const res = await fetch(url, {
     method,
     headers,
     body: data ? JSON.stringify(data) : undefined,
-    credentials: "omit", // Using JWT, no need for cookies
+    credentials: "include",
   });
 
   await throwIfResNotOk(res);
@@ -35,15 +35,8 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
     async ({ queryKey }) => {
-      const token = localStorage.getItem("audit_token") || new URLSearchParams(window.location.search).get("token");
-      const headers: Record<string, string> = {};
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-
       const res = await fetch(queryKey.join("/") as string, {
-        headers,
-        credentials: "omit",
+        credentials: "include",
       });
 
       if (unauthorizedBehavior === "returnNull" && res.status === 401) {
