@@ -5,6 +5,7 @@ import { GitHubClient, GitHubApiError } from "../../integrations/github/client";
 import { ai, safeJsonParse, triageModel } from "../../integrations/ai/openaiClient";
 import { logger } from "../../config/logger";
 import { AppError } from "../../middleware/errorHandler";
+import { assertOwnership } from "../../middleware/ownership";
 
 const SOURCE_EXTENSIONS = [".js", ".ts", ".tsx", ".jsx", ".py", ".java", ".go", ".rb", ".php", ".cs", ".rs", ".cpp", ".c"];
 const CONFIG_FILES = ["package.json", "tsconfig.json", "README.md", "requirements.txt", "Gemfile", "go.mod", "composer.json", "docker-compose.yml", "Dockerfile"];
@@ -23,6 +24,42 @@ export async function getAuditWithItems(id: string) {
   if (!audit) return undefined;
   const items = await AuditItem.find({ auditId: id }).lean();
   return { ...audit, items };
+}
+
+/**
+ * Ownership-enforced audit fetch: a foreign OR untagged (legacy, unbackfilled)
+ * audit is indistinguishable from a missing one (404 upstream).
+ */
+export async function findOwnAuditWithItems(id: string, userId: string) {
+  const audit = await Audit.findOne({ _id: id, userId }).lean();
+  if (!audit) return undefined;
+  const items = await AuditItem.find({ auditId: audit._id }).lean();
+  return { ...audit, items };
+}
+
+/**
+ * Ownership gate for directly-addressed audit items.
+ * New items carry their own `userId`; legacy items fall back to the ownership
+ * of the parent audit. Any mismatch → 404 (existence not disclosed).
+ */
+export async function assertItemAccess(itemId: string, userId: string): Promise<AuditItemDocument> {
+  const item = await AuditItem.findById(itemId).lean();
+  if (!item) {
+    throw AppError.notFound("Audit item not found");
+  }
+  const itemOwner = item.userId != null ? String(item.userId) : null;
+  if (itemOwner === userId) {
+    return item as AuditItemDocument;
+  }
+  if (itemOwner !== null) {
+    throw AppError.notFound("Audit item not found");
+  }
+  const parent = await Audit.findById(item.auditId).lean();
+  const parentOwner = parent?.userId != null ? String(parent.userId) : null;
+  if (parentOwner !== userId) {
+    throw AppError.notFound("Audit item not found");
+  }
+  return item as AuditItemDocument;
 }
 
 export async function listAudits(filter: Record<string, unknown> = {}) {
@@ -63,6 +100,8 @@ interface RepoAuditInput {
   repo: string;
   requestedBranch?: string;
   gh: GitHubClient;
+  /** Owning user — stamped onto the audit and every item it produces. */
+  userId: string;
 }
 
 interface AuditIssue {
@@ -123,7 +162,7 @@ interface RepoAuditResult {
 
 /** Runs the full repo audit synchronously (protected by user's plan check in the route). */
 export async function runRepoAudit(input: RepoAuditInput): Promise<RepoAuditResult> {
-  const { owner, repo, requestedBranch, gh } = input;
+  const { owner, repo, requestedBranch, gh, userId } = input;
 
   // 1. Resolve target branch
   const targetBranch = requestedBranch || (await resolveDefaultBranch(owner, repo, gh));
@@ -197,8 +236,9 @@ export async function runRepoAudit(input: RepoAuditInput): Promise<RepoAuditResu
   const parsed = safeJsonParse(aiResponse.choices[0].message.content || '{"issues": []}');
   const issues = normalizeIssues(parsed?.issues ?? []);
 
-  // 5. Persist audit + items
+  // 5. Persist audit + items (owned by the requesting user)
   const audit = await createAudit({
+    userId,
     title: `Audit: ${repo}`,
     description: `Deep AI audit for ${owner}/${repo} using dynamic file discovery.`,
     status: "completed",
@@ -211,6 +251,7 @@ export async function runRepoAudit(input: RepoAuditInput): Promise<RepoAuditResu
   for (const issue of issues) {
     const item = await createAuditItem({
       auditId: audit._id,
+      userId,
       label: String(issue.description || "Point of interest detected"),
       type: String(issue.type || "security"),
       value: issue.file ? String(issue.file) : "Root",

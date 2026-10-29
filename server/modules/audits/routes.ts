@@ -1,18 +1,21 @@
 import { Router, type Request, Response } from "express";
 import { requireAuth } from "../../middleware/auth";
 import { AppError } from "../../middleware/errorHandler";
+import { assertOwnership } from "../../middleware/ownership";
 import { recordAuditLog } from "../../middleware/auditLog";
 import { githubClientFromToken, GitHubApiError } from "../../integrations/github/client";
 import { logger } from "../../config/logger";
 import { User } from "../../models/User";
+import { Audit, type AuditDocument } from "../../models/Audit";
 import { planLimitError } from "../usage/limits";
 import {
   applyFixesAndCreatePR,
+  assertItemAccess,
   createAudit,
   createAuditItem,
   deleteAudit,
   deleteAuditItem,
-  getAuditWithItems,
+  findOwnAuditWithItems,
   listAudits,
   runRepoAudit,
   updateAudit,
@@ -42,6 +45,12 @@ function handleError(error: unknown, res: Response, label: string) {
   return res.status(500).json({ message: (error as Error).message || "Unexpected error" });
 }
 
+/** Fetches an audit by id, enforcing ownership (404 for foreign/missing). */
+async function ownAuditOr404(id: string, req: Request) {
+  const audit = await Audit.findById(id).lean();
+  return assertOwnership(audit, req.user!, "Audit") as AuditDocument;
+}
+
 // === Repo deep audit ===
 
 auditsRouter.post("/repos/:owner/:repo/audit", requireAuth, async (req: Request, res: Response) => {
@@ -58,9 +67,9 @@ auditsRouter.post("/repos/:owner/:repo/audit", requireAuth, async (req: Request,
   }
 
   try {
-    const result = await runRepoAudit({ owner, repo, requestedBranch, gh });
+    const result = await runRepoAudit({ owner, repo, requestedBranch, gh, userId: String(user._id) });
 
-    await User.findByIdAndUpdate(user._id, { $inc: { auditsUsed: 1 } });
+    await User.findByIdAndUpdate(String(user._id), { $inc: { auditsUsed: 1 } });
     recordAuditLog(req, {
       action: "repo.audit.completed",
       targetType: "repo",
@@ -74,22 +83,24 @@ auditsRouter.post("/repos/:owner/:repo/audit", requireAuth, async (req: Request,
   }
 });
 
-// === Audit CRUD ===
+// === Audit CRUD (ownership-filtered) ===
 
-auditsRouter.get("/audits", requireAuth, async (_req, res) => {
-  const audits = await listAudits();
+auditsRouter.get("/audits", requireAuth, async (req, res) => {
+  const audits = await listAudits({ userId: req.user!._id });
   return res.json(audits);
 });
 
 auditsRouter.get("/audits/:id", requireAuth, async (req, res) => {
-  const audit = await getAuditWithItems(String(req.params.id));
+  const audit = await findOwnAuditWithItems(String(req.params.id), String(req.user!._id));
   if (!audit) return res.status(404).json({ message: "Audit not found" });
   return res.json(audit);
 });
 
 auditsRouter.post("/audits", requireAuth, async (req, res) => {
   try {
-    const audit = await createAudit(req.body);
+    // Ownership is SERVER-assigned — never trust a client-provided userId
+    const { userId: _ignored, ...safeBody } = req.body ?? {};
+    const audit = await createAudit({ ...safeBody, userId: req.user!._id });
     return res.status(201).json(audit);
   } catch (err) {
     return res.status(400).json({ message: (err as Error).message });
@@ -98,44 +109,80 @@ auditsRouter.post("/audits", requireAuth, async (req, res) => {
 
 auditsRouter.patch("/audits/:id", requireAuth, async (req, res) => {
   try {
-    const audit = await updateAudit(String(req.params.id), req.body);
-    if (!audit) return res.status(404).json({ message: "Audit not found" });
+    await ownAuditOr404(String(req.params.id), req);
+    // userId cannot be reassigned via PATCH
+    const { userId: _ignored, ...patch } = req.body ?? {};
+    const audit = await updateAudit(String(req.params.id), patch);
     return res.json(audit);
   } catch (err) {
+    if (err instanceof AppError) {
+      return res.status(err.status).json({ message: err.message });
+    }
     return res.status(400).json({ message: (err as Error).message });
   }
 });
 
 auditsRouter.delete("/audits/:id", requireAuth, async (req, res) => {
-  await deleteAudit(String(req.params.id));
-  recordAuditLog(req, { action: "audit.deleted", targetType: "audit", targetId: String(req.params.id) });
-  return res.status(204).send();
+  try {
+    await ownAuditOr404(String(req.params.id), req);
+    await deleteAudit(String(req.params.id));
+    recordAuditLog(req, { action: "audit.deleted", targetType: "audit", targetId: String(req.params.id) });
+    return res.status(204).send();
+  } catch (err) {
+    if (err instanceof AppError) {
+      return res.status(err.status).json({ message: err.message });
+    }
+    return res.status(400).json({ message: (err as Error).message });
+  }
 });
 
-// === Audit items ===
+// === Audit items (ownership-filtered) ===
 
 auditsRouter.post("/audits/:auditId/items", requireAuth, async (req, res) => {
   try {
-    const item = await createAuditItem({ ...req.body, auditId: req.params.auditId });
+    const parentAudit = await Audit.findById(String(req.params.auditId)).lean();
+    assertOwnership(parentAudit, req.user!, "Audit");
+    const { userId: _ignored, ...safeBody } = req.body ?? {};
+    const item = await createAuditItem({
+      ...safeBody,
+      auditId: req.params.auditId,
+      userId: req.user!._id,
+    });
     return res.status(201).json(item);
   } catch (err) {
+    if (err instanceof AppError) {
+      return res.status(err.status).json({ message: err.message });
+    }
     return res.status(400).json({ message: (err as Error).message });
   }
 });
 
 auditsRouter.patch("/audit-items/:id", requireAuth, async (req, res) => {
   try {
-    const item = await updateAuditItem(String(req.params.id), req.body);
+    await assertItemAccess(String(req.params.id), String(req.user!._id));
+    const { userId: _ignored, ...patch } = req.body ?? {};
+    const item = await updateAuditItem(String(req.params.id), patch);
     if (!item) return res.status(404).json({ message: "Item not found" });
     return res.json(item);
   } catch (err) {
+    if (err instanceof AppError) {
+      return res.status(err.status).json({ message: err.message });
+    }
     return res.status(400).json({ message: (err as Error).message });
   }
 });
 
 auditsRouter.delete("/audit-items/:id", requireAuth, async (req, res) => {
-  await deleteAuditItem(String(req.params.id));
-  return res.status(204).send();
+  try {
+    await assertItemAccess(String(req.params.id), String(req.user!._id));
+    await deleteAuditItem(String(req.params.id));
+    return res.status(204).send();
+  } catch (err) {
+    if (err instanceof AppError) {
+      return res.status(err.status).json({ message: err.message });
+    }
+    return res.status(400).json({ message: (err as Error).message });
+  }
 });
 
 // === Fix application (audit → new branch + PR) ===

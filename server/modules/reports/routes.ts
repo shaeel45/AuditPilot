@@ -3,7 +3,7 @@ import { requireAuth } from "../../middleware/auth";
 import { ai, safeJsonParse, triageModel } from "../../integrations/ai/openaiClient";
 import { logger } from "../../config/logger";
 import { Report, type ReportDocument } from "../../models/Report";
-import { getAuditWithItems } from "../audits/service";
+import { findOwnAuditWithItems } from "../audits/service";
 
 export const reportsRouter = Router();
 
@@ -19,9 +19,11 @@ reportsRouter.post(
   requireAuth,
   async (req: Request, res: Response) => {
     const auditId = String(req.params.id);
+    const user = req.user!;
 
     try {
-      const audit = await getAuditWithItems(auditId);
+      // Ownership-checked: a foreign/untagged audit is a plain 404 here
+      const audit = await findOwnAuditWithItems(auditId, String(user._id));
       if (!audit) {
         return res.status(404).json({ message: "Audit not found" });
       }
@@ -56,6 +58,7 @@ reportsRouter.post(
 
       const report = await Report.create({
         auditId,
+        userId: user._id,
         summary,
         riskScore,
         generatedContent,
