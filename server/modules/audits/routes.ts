@@ -9,6 +9,7 @@ import { Audit, type AuditDocument } from "../../models/Audit";
 import { reserve, release, limitReachedError } from "../usage/service";
 import { enqueue } from "../jobs/queue";
 import {
+  applyEditedContentsAndCreatePR,
   applyFixesAndCreatePR,
   assertItemAccess,
   buildFixPreview,
@@ -135,6 +136,40 @@ auditsRouter.get("/audits/:id/fix-preview", requireAuth, async (req, res) => {
     return res.json(preview);
   } catch (error) {
     return handleError(error, res, "fix preview error");
+  }
+});
+
+auditsRouter.post("/repos/:owner/:repo/fix-contents", requireAuth, async (req: Request, res: Response) => {
+  const owner = String(req.params.owner);
+  const repo = String(req.params.repo);
+  const { files, targetBranch, title } = (req.body ?? {}) as {
+    files?: Record<string, string>;
+    targetBranch?: string;
+    title?: string;
+  };
+  const gh = githubClientFromToken(tokenOf(req));
+
+  try {
+    if (!files || Object.keys(files).length === 0 || typeof targetBranch !== "string") {
+      throw AppError.badRequest("files (path → content map) and targetBranch are required");
+    }
+    const result = await applyEditedContentsAndCreatePR({
+      owner,
+      repo,
+      targetBranch,
+      files,
+      title: typeof title === "string" && title.trim() ? title : undefined,
+      gh,
+    });
+    recordAuditLog(req, {
+      action: "repo.fix.applied",
+      targetType: "repo",
+      targetId: `${owner}/${repo}`,
+      meta: { pr: result.prNumber, files: result.modifiedFiles, mode: "reviewed-contents" },
+    });
+    return res.json(result);
+  } catch (error) {
+    return handleError(error, res, "apply edited contents error");
   }
 });
 

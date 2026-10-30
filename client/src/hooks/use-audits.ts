@@ -212,7 +212,7 @@ export function useApplyFix() {
 }
 
 /** Per-item REAL current code + match status for the fix-review UI. */
-export function useFixPreview(
+export function useFixPreview<T = any>(
     auditId: string | undefined,
     owner: string | undefined,
     repo: string | undefined,
@@ -221,10 +221,47 @@ export function useFixPreview(
         queryKey: ["fix-preview", auditId, owner, repo],
         queryFn: async () => {
             if (!auditId || !owner || !repo) return null;
-            return api.getFixPreview(auditId, owner, repo);
+            return (await api.getFixPreview(auditId, owner, repo)) as T;
         },
         enabled: !!auditId && !!owner && !!repo,
         retry: false,
+        // The editor builds from this snapshot — don't wipe user edits on refocus.
+        staleTime: 10 * 60 * 1000,
+        refetchOnWindowFocus: false,
+    });
+}
+
+/**
+ * Commits user-reviewed FULL file contents (from the inline diff editor) to a
+ * fresh branch and opens a pull request — the server-side counterpart of the
+ * Bitbucket-style "Files changed" editor.
+ */
+export function useApplyFixContents() {
+    const { toast } = useToast();
+
+    return useMutation({
+        mutationFn: async ({ owner, repo, files, targetBranch, title }: {
+            owner: string;
+            repo: string;
+            files: Record<string, string>;
+            targetBranch: string;
+            title?: string;
+        }) => {
+            return api.fixContents(owner, repo, files, targetBranch, title);
+        },
+        onSuccess: (data: any) => {
+            toast({
+                title: "Pull Request Created",
+                description: `#${data.prNumber ?? ""} opened with your reviewed edits.`.trim(),
+            });
+        },
+        onError: (error: unknown) => {
+            toast({
+                title: "Pull Request Failed",
+                description: error instanceof Error ? error.message : "Failed to create the pull request",
+                variant: "destructive",
+            });
+        },
     });
 }
 

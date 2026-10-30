@@ -9,7 +9,7 @@ import { useLocation } from "wouter";
 import DashboardLayout from "./DashboardLayout";
 
 import { useState } from "react";
-import { BranchSelectModal } from "@/components/dashboard/BranchSelectModal";
+import { BranchSelectModal, ownerLoginOf } from "@/components/dashboard/BranchSelectModal";
 
 export default function ReposPage() {
   const { data: repos, isLoading: isLoadingRepos } = useRepos();
@@ -26,7 +26,7 @@ export default function ReposPage() {
 
   const handleConfirmBranch = (branch: string) => {
     if (selectedRepo) {
-      setLocation(`/app/audit/${selectedRepo.owner.login}/${selectedRepo.name}/${branch}`);
+      setLocation(`/app/audit/${ownerLoginOf(selectedRepo)}/${selectedRepo.name}/${branch}`);
     }
     setIsModalOpen(false);
   };

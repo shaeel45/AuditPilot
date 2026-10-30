@@ -141,6 +141,162 @@ function selectAuditableFiles(paths: string[]): string[] {
   return finalFiles.slice(0, prioritized.length > 0 ? AUDIT_FILE_LIMIT : 5);
 }
 
+/** Paths whose lines should never be treated as auditable source. */
+function isGeneratedPath(p: string): boolean {
+  return /(^|\/)(node_modules|dist|build|\.git|vendor|target)(\/|$)/i.test(p);
+}
+
+/**
+ * Resolves a (possibly sloppy) AI file hint to a REAL path in the repository
+ * tree. AI models frequently answer with basenames, partial paths, or
+ * placeholders like "Root" — this maps them back onto the actual tree:
+ *   1. exact (case-insensitive) match
+ *   2. same basename, ranked by longest shared path suffix
+ *   3. token overlap (≥50% of the hint's meaningful tokens appear in the path)
+ * Returns null when nothing plausible matches — callers must never invent a
+ * fake path (the "Root" placeholder bug).
+ */
+export function resolveFilePath(hint: string | null | undefined, treePaths: string[]): string | null {
+  if (!treePaths.length) return null;
+  const clean = (hint ?? "").trim().replace(/^["'`]|["'`]$/g, "").replace(/\\/g, "/").replace(/^[./]+/, "");
+  if (!clean || clean.length < 3) return null;
+
+  const candidates = treePaths.filter(p => !isGeneratedPath(p));
+  if (candidates.length === 0) return null;
+
+  // 1) Exact (case-insensitive)
+  const low = clean.toLowerCase();
+  const exact = candidates.find(p => p.toLowerCase() === low);
+  if (exact) return exact;
+
+  // 2) Same basename — rank by longest shared suffix with the hint
+  const base = low.split("/").pop() ?? low;
+  const byBase = candidates.filter(p => {
+    const pl = p.toLowerCase();
+    return pl === base || pl.endsWith("/" + base) || pl.split("/").pop() === base;
+  });
+  if (byBase.length === 1) return byBase[0];
+  if (byBase.length > 1) {
+    const sharedSuffix = (p: string) => {
+      const pl = p.toLowerCase();
+      let n = 0;
+      let i = pl.length - 1;
+      let j = low.length - 1;
+      while (i >= 0 && j >= 0 && pl[i] === low[j]) {
+        n++;
+        i--;
+        j--;
+      }
+      return n;
+    };
+    return byBase.sort((a, b) => sharedSuffix(b) - sharedSuffix(a))[0];
+  }
+
+  // 3) Token overlap (e.g. hint "binance config" → "src/config/binance.js")
+  const tokens = low.split(/[^\w.\-]+/).filter(t => t.length >= 3);
+  if (!tokens.length) return null;
+  // Boundary-aware containment: a placeholder like "root" must NOT match a
+  // longer filename such as "RootScreen.tsx" (letters may not touch the token).
+  const includesToken = (pl: string, token: string) =>
+    new RegExp(`(^|[^a-z0-9])${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`).test(pl);
+  let best: { p: string; score: number } | null = null;
+  for (const p of candidates) {
+    const pl = p.toLowerCase();
+    let score = 0;
+    for (const t of tokens) if (includesToken(pl, t)) score++;
+    if (score > 0 && (!best || score > best.score)) best = { p, score };
+  }
+  return best && best.score / tokens.length >= 0.5 ? best.p : null;
+}
+
+// --- Deterministic anchor recovery ------------------------------------------
+// The AI frequently describes a finding WITHOUT file/code excerpts (it returns
+// only label/type/severity). Instead of leaving those items unanchored, scan
+// the file content we already fetched for strong tokens quoted in the finding
+// label (e.g. 'menubtn') and recover: which file, which line, the snippet.
+
+const ANCHOR_STOPWORDS = new Set([
+  "unchecked", "reference", "referenced", "referencing", "before", "attaching", "attached", "onclick",
+  "handler", "handlers", "element", "elements", "exist", "exists", "existing", "missing", "error",
+  "errors", "uncaught", "referenceerror", "typeerror", "halt", "halts", "script", "scripts",
+  "execution", "executing", "code", "this", "that", "with", "without", "will", "would", "should",
+  "could", "does", "when", "while", "then", "there", "here", "only", "must", "also", "have", "has",
+  "been", "from", "into", "same", "within", "inside", "outside", "every", "each", "which", "what",
+  "security", "performance", "accessibility", "issue", "issues", "potential", "possibly", "undefined",
+  "null", "empty", "page", "site", "website", "user", "users", "browser", "component", "function",
+  "variable", "value", "content", "property", "props", "state", "text", "link", "image", "button",
+  "input", "form", "list", "items", "screen", "screens", "using", "used", "usage", "files",
+]);
+
+export interface RecoveredAnchor {
+  file: string;
+  /** 1-based line of the best token hit. */
+  line: number;
+  /** Trimmed source line to keep as anchor evidence (`old_code`). */
+  oldCode: string;
+  score: number;
+}
+
+/**
+ * Strong anchor tokens in order of confidence: quoted words first (`'menubtn'`),
+ * then longer identifiers not in the stopword list.
+ */
+export function anchorTokens(label: string): Array<{ token: string; weight: number }> {
+  const quoted = Array.from(label.matchAll(/[`'"]([^`'"@\n]{3,80})[`'"]/g))
+    .map(m => m[1].trim())
+    .filter(t => t.length >= 3);
+  if (quoted.length > 0) {
+    return Array.from(new Set(quoted.map(t => t.toLowerCase()))).map(token => ({ token, weight: 3 }));
+  }
+  const generic = Array.from(new Set(label.split(/[^A-Za-z0-9$.@/-]+/))).filter(
+    t => t.length >= 5 && !ANCHOR_STOPWORDS.has(t.toLowerCase()) && /^[A-Za-z_$][\w$.@/-]*$/.test(t),
+  );
+  return generic.map(t => ({ token: t.toLowerCase(), weight: 1 }));
+}
+
+/**
+ * Token-scan a set of file contents for the anchor tokens of one finding.
+ * A hinted file gets a strong bias; files with token hits in their PATH get a
+ * small one. Only confident hits pass the score threshold, so this never
+ * fabricates anchors when the label has no code identifiers to look for.
+ */
+export function recoverAnchor(
+  label: string,
+  hintedFile: string | null,
+  fileContents: Map<string, string>,
+): RecoveredAnchor | null {
+  const tokens = anchorTokens(label);
+  if (!tokens.length) return null;
+
+  let best: { file: string; line: number; score: number; codeLine: string } | null = null;
+  for (const [path, content] of Array.from(fileContents)) {
+    if (!content) continue;
+    const lines = content.split("\n");
+    const pathLow = path.toLowerCase();
+    const fileBias = hintedFile === path ? 3 : tokens.some(({ token }) => pathLow.includes(token)) ? 1 : 0;
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i].toLowerCase();
+      let score = fileBias;
+      let hit = false;
+      for (const { token, weight } of tokens) {
+        if (l.includes(token)) {
+          score += weight * (token.length >= 4 ? 2 : 1);
+          hit = true;
+        }
+      }
+      if (!hit) continue;
+      if (!best || score > best.score) {
+        best = { file: path, line: i + 1, score, codeLine: lines[i].trim() };
+      }
+    }
+  }
+
+  // Confidence floor: one quoted token hit (≥6) or two-or-more generic hits.
+  const minScore = tokens.some(({ weight }) => weight >= 3) ? 6 : 3;
+  if (!best || best.score < minScore) return null;
+  return { file: best.file, line: best.line, oldCode: best.codeLine, score: best.score };
+}
+
 function normalizeIssues(rawIssues: unknown): AuditIssue[] {
   if (!Array.isArray(rawIssues)) return [];
   return rawIssues.map((issue: Record<string, unknown>) => {
@@ -193,6 +349,8 @@ export async function runRepoAudit(input: RepoAuditInput): Promise<RepoAuditResu
 
   // 3. Fetch contents (truncated per file)
   const chunks: string[] = [];
+  /** path → content actually shown to the AI — used to recover missing anchors. */
+  const fileEvidence = new Map<string, string>();
   for (let i = 0; i < finalFiles.length; i++) {
     const path = finalFiles[i];
     try {
@@ -202,6 +360,7 @@ export async function runRepoAudit(input: RepoAuditInput): Promise<RepoAuditResu
           ? `${content.substring(0, FILE_CHAR_LIMIT)}\n... [truncated]`
           : content;
       chunks.push(`\n--- File: ${path} ---\n${truncated}`);
+      fileEvidence.set(path, truncated);
     } catch (err) {
       logger.warn({ path, err: (err as Error).message }, "skipped unreadable file during audit");
     }
@@ -223,7 +382,7 @@ export async function runRepoAudit(input: RepoAuditInput): Promise<RepoAuditResu
     "repo-audit",
     {
       system:
-        "You are an expert security and performance auditor. Analyze the provided repository files and identify real issues. For each issue, provide: type (security, performance, accessibility), severity (critical, medium, low), file path, description, and if a fix is available, provide the old code and the new fixed code. Output valid JSON ONLY with an 'issues' array.",
+        "You are an expert security and performance auditor. Analyze the provided repository files and identify real issues. For EVERY issue you MUST output: (1) 'file' — the EXACT relative path copied VERBATIM from the '--- File: <path> ---' markers; never invent, shorten or placeholder it (NO 'Root'/'root'). (2) 'old_code' — a short verbatim excerpt (1–6 lines) copied EXACTLY as it appears in that file showing the problematic code; this is required even when you have no fix. (3) 'new_code' — the corrected code, ONLY when a concrete fix is available. Also provide type (security, performance, accessibility), severity (critical, medium, low), and description. Output valid JSON ONLY with an 'issues' array.",
       user: `REPOSITORY: ${owner}/${repo}\n\n${untrustedDataBlock(`FILES of ${owner}/${repo} @ ${targetBranch}`, repoContent)}\n\nAnalyze the file data above and provide the audit issues in the requested JSON format.`,
     },
     { userId: input.userId },
@@ -231,6 +390,28 @@ export async function runRepoAudit(input: RepoAuditInput): Promise<RepoAuditResu
   await onProgress?.({ stage: "verifying", percent: 80, message: "Verifying and persisting results…" });
 
   const issues = normalizeIssues(parsed?.issues ?? []);
+
+  // Anchor recovery: the model sometimes emits findings with no file hint and
+  // no code excerpts (label-only). The fetched-file evidence we already hold
+  // lets us recover `file` + `old_code` deterministically — token-scanning the
+  // content for quoted identifier(s) in the description (e.g. 'menubtn').
+  for (const issue of issues) {
+    const hinted = resolveFilePath(issue.file ? String(issue.file) : "", allPaths);
+    const hasOldCode = Boolean(issue.fix?.old_code || (issue.old_code as unknown));
+    if (hinted && hasOldCode) continue;
+    const recovered = recoverAnchor(
+      String(issue.description || ""),
+      hinted ?? (issue.file ? String(issue.file) : null),
+      fileEvidence,
+    );
+    if (!recovered) continue;
+    if (!hasOldCode) (issue as { old_code?: string }).old_code = recovered.oldCode;
+    if (!hinted) issue.file = recovered.file;
+    logger.info(
+      { owner, repo, recoveredFile: recovered.file, line: recovered.line, score: recovered.score },
+      "recovered missing anchor for audit issue",
+    );
+  }
 
   // 5. Persist audit + items (owned by the requesting user)
   await onProgress?.({ stage: "verifying", percent: 90, message: "Saving audit results…" });
@@ -246,12 +427,16 @@ export async function runRepoAudit(input: RepoAuditInput): Promise<RepoAuditResu
 
   const itemIds: string[] = [];
   for (const issue of issues) {
+    // Resolve the AI's file hint against the REAL tree we fetched — a bogus
+    // hint ("Root", a bare basename, "config"…) must never be persisted as a
+    // path, otherwise fix-preview fetches a non-existent file.
+    const resolvedFile = resolveFilePath(issue.file ? String(issue.file) : "", allPaths);
     const item = await createAuditItem({
       auditId: audit._id,
       userId: ownerObjectId,
       label: String(issue.description || "Point of interest detected"),
       type: String(issue.type || "security"),
-      value: issue.file ? String(issue.file) : "Root",
+      value: resolvedFile ?? "",
       severity: (issue.severity as never) || "medium",
       old_code: issue.fix?.old_code || (issue.old_code as string),
       new_code: issue.fix?.new_code || (issue.new_code as string),
@@ -390,13 +575,34 @@ export async function buildFixPreview(input: {
 }): Promise<FixPreviewResult> {
   const { owner, repo, auditId, targetBranch, items, gh } = input;
 
+  // Repo tree ONCE — used to validate/repair the AI's file hints so a bogus
+  // hint ("Root", a bare basename…) never gets treated as a real path.
+  let treePaths: string[] = [];
+  try {
+    const treeData = await gh.get<{ tree: { type: string; path: string }[] }>(
+      `/repos/${owner}/${repo}/git/trees/${targetBranch}?recursive=1`,
+    );
+    treePaths = (treeData.tree || []).filter(f => f.type === "blob").map(f => f.path);
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, "fix preview: tree fetch failed — hints used unvalidated");
+  }
+
   const fileToPath = (item: Record<string, unknown>): string | null => {
-    const value = typeof item.value === "string" ? item.value.trim() : "";
-    const file = typeof item.file === "string" ? item.file.trim() : "";
-    return (value && value) || (file && file) || null;
+    const raw =
+      (typeof item.value === "string" ? item.value.trim() : "") ||
+      (typeof item.file === "string" ? item.file.trim() : "");
+    const resolved = resolveFilePath(raw, treePaths);
+    if (resolved) return resolved;
+    // No tree available (fetch failed): accept a hint only when it already
+    // looks like a real path — never a placeholder like "Root".
+    const looksLikePath = /^[.\w\-/]+\.[A-Za-z0-9]{1,8}$/.test(raw.replace(/\\/g, "/").replace(/^[./]+/, ""));
+    if (!treePaths.length && raw.length > 2 && !/^root$/i.test(raw) && looksLikePath) {
+      return raw.replace(/\\/g, "/").replace(/^[./]+/, "");
+    }
+    return null;
   };
 
-  // Unique file paths across all items
+  // Unique RESOLVED file paths across all items
   const paths = Array.from(new Set(items.map(fileToPath).filter((p): p is string => !!p)));
 
   // Fetch each referenced file once
@@ -415,8 +621,10 @@ export async function buildFixPreview(input: {
 
   const files: FixPreviewResult["files"] = {};
   for (const [p, content] of Array.from(contents.entries())) {
-    const totalLines = content ? content.split("\n").length : 0;
-    const lines = content.split("\n");
+    if (!content) continue; // a path that 404'd must not appear as an empty file entry
+    const normalized = content.replace(/\r\n/g, "\n");
+    const totalLines = normalized.split("\n").length;
+    const lines = normalized.split("\n");
     files[p] = {
       content: lines.slice(0, MAX_PREVIEW_LINES).join("\n"),
       truncated: totalLines > MAX_PREVIEW_LINES,
@@ -430,18 +638,34 @@ export async function buildFixPreview(input: {
     files,
     items: items.map(item => {
       const filePath = fileToPath(item);
+      const label = typeof item.label === "string" ? item.label : "Issue";
       const oldCode = typeof item.old_code === "string" ? item.old_code : null;
       const newCode = typeof item.new_code === "string" ? item.new_code : null;
       const content = filePath ? contents.get(filePath) ?? "" : "";
+      let match = oldCode ? locateCode(content, oldCode) : null;
+      let anchoredOldCode = oldCode;
+
+      // Recovery at query time: items that never got code anchors (label-only
+      // AI output) are token-scanned against the content we just fetched so
+      // the edit view can pin a real line. Never fabricate: recovery returns
+      // null when the label has no code-searchable tokens.
+      if ((!match || !anchoredOldCode) && filePath && content) {
+        const recovered = recoverAnchor(label, filePath, new Map([[filePath, content]]));
+        if (recovered) {
+          if (!anchoredOldCode) anchoredOldCode = recovered.oldCode;
+          match = { line: recovered.line, exact: false };
+        }
+      }
+
       return {
         itemId: String(item._id),
-        label: typeof item.label === "string" ? item.label : "Issue",
+        label,
         type: typeof item.type === "string" ? item.type : "issue",
         severity: typeof item.severity === "string" ? item.severity : "medium",
         file: filePath,
-        oldCode,
+        oldCode: anchoredOldCode,
         newCode,
-        match: oldCode ? locateCode(content, oldCode) : null,
+        match,
       };
     }),
   };
@@ -548,6 +772,89 @@ export async function applyFixesAndCreatePR(input: ApplyFixInput): Promise<Apply
     branch: newBranchName,
     modifiedFiles: modifiedFilesCount,
     appliedIssues,
+    skipped,
+  };
+}
+
+export interface ApplyContentsInput {
+  owner: string;
+  repo: string;
+  targetBranch: string;
+  /** path → FULL new file content (UTF-8) produced by the review/edit UI. */
+  files: Record<string, string>;
+  /** Optional PR title override. */
+  title?: string;
+  gh: GitHubClient;
+}
+
+/**
+ * Commits user-reviewed FULL file contents to a fresh branch and opens a PR.
+ * Unlike applyFixesAndCreatePR (old→new snippet substitution), this accepts
+ * whole files exactly as the user left them in the edit UI — insertions,
+ * deletions and rewrites are all preserved verbatim.
+ */
+export async function applyEditedContentsAndCreatePR(input: ApplyContentsInput): Promise<ApplyFixResult> {
+  const { owner, repo, targetBranch, files, gh } = input;
+
+  const entries = Object.entries(files).filter(([path]) => path && typeof files[path] === "string");
+  if (entries.length === 0) {
+    throw AppError.badRequest("files (path → content) must contain at least one edited file");
+  }
+
+  const baseSha = await checkBranchExists(owner, repo, targetBranch, gh);
+
+  const newBranchName = `auditpilot-fix-${Date.now()}`;
+  await gh.post(`/repos/${owner}/${repo}/git/refs`, {
+    ref: `refs/heads/${newBranchName}`,
+    sha: baseSha,
+  });
+
+  const skipped: Array<{ file: string; reason: string }> = [];
+  let committed = 0;
+  for (const [filePath, content] of entries) {
+    try {
+      const fileData = await gh.get<{ sha: string }>(
+        `/repos/${owner}/${repo}/contents/${filePath}?ref=${newBranchName}`,
+      );
+      await gh.put(`/repos/${owner}/${repo}/contents/${filePath}`, {
+        message: `AuditPilot: apply reviewed edits in ${filePath}`,
+        content: Buffer.from(content).toString("base64"),
+        sha: fileData.sha,
+        branch: newBranchName,
+      });
+      committed++;
+    } catch (err) {
+      skipped.push({ file: filePath, reason: `commit failed: ${(err as Error).message}` });
+    }
+  }
+
+  if (committed === 0) {
+    throw AppError.badRequest(
+      "No edited files could be committed to the fix branch.",
+      skipped,
+    );
+  }
+
+  const createdPR = await gh.post<{ html_url: string; number: number }>(`/repos/${owner}/${repo}/pulls`, {
+    title: input.title ?? "AuditPilot: Apply reviewed code fixes",
+    body: [
+      "This PR applies code fixes reviewed and edited in AuditPilot.",
+      "",
+      `**Updated:** ${committed} file(s)`,
+      ...(skipped.length
+        ? ["", `**Skipped (${skipped.length}):**`, ...skipped.slice(0, 15).map(s => `- \`${s.file}\` — ${s.reason}`)]
+        : []),
+    ].join("\n"),
+    head: newBranchName,
+    base: targetBranch,
+  });
+
+  return {
+    prUrl: createdPR.html_url,
+    prNumber: createdPR.number,
+    branch: newBranchName,
+    modifiedFiles: committed,
+    appliedIssues: committed,
     skipped,
   };
 }

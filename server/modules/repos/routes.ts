@@ -31,10 +31,11 @@ reposRouter.get("/repos/:owner/:repo/branches", requireAuth, async (req: Request
   const { owner, repo } = req.params;
   const gh = githubClientFromToken(tokenOf(req));
   try {
-    const branches = await gh.get<{ name: string }[]>(`/repos/${owner}/${repo}/branches`);
+    const branches = await gh.get<{ name: string }[]>(`/repos/${owner}/${repo}/branches?per_page=100`);
     return res.json(branches.map(b => b.name));
   } catch (error) {
     const message = error instanceof GitHubApiError ? error.message : "Failed to fetch branches";
+    logger.warn({ owner, repo, err: (error as Error).message }, "failed to list branches");
     return res.status(500).json({ message });
   }
 });

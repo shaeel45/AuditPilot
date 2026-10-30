@@ -78,7 +78,10 @@ export const api = {
 
   async getBranches(owner: string, repo: string) {
     const res = await fetch(`${API_BASE}/api/repos/${owner}/${repo}/branches`, { ...cred });
-    if (!res.ok) throw new Error("Failed to fetch branches");
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({} as { message?: string }));
+      throw new Error(body.message || "Failed to fetch branches");
+    }
     return res.json();
   },
 
@@ -138,6 +141,108 @@ export const api = {
       ...cred,
     });
     if (!res.ok) throw new Error("Failed to fix pull request");
+    return res.json();
+  },
+
+  /**
+   * Commits user-reviewed FULL file contents (from the inline diff editor) to
+   * a fresh branch and opens a pull request server-side.
+   */
+  async fixContents(owner: string, repo: string, files: Record<string, string>, targetBranch: string, title?: string) {
+    const res = await fetch(`${API_BASE}/api/repos/${owner}/${repo}/fix-contents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ files, targetBranch, ...(title ? { title } : {}) }),
+      ...cred,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({} as { message?: string }));
+      throw new Error(body.message || "Failed to create pull request from edited files");
+    }
+    return res.json();
+  },
+
+  /**
+   * Applies old→new code substitutions across a repo and opens a pull request
+   * (fresh branch: one commit per file). Used by the PR manager's
+   * "Finalize & Create PR" for drafts that store snippet pairs.
+   */
+  async repoFix(owner: string, repo: string, issues: Array<{ file: string; old_code: string; new_code: string }>, targetBranch: string) {
+    const res = await fetch(`${API_BASE}/api/repos/${owner}/${repo}/fix`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ issues, targetBranch }),
+      ...cred,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({} as { message?: string }));
+      throw new Error(body.message || "Failed to create pull request");
+    }
+    return res.json() as Promise<{ prUrl: string; prNumber: number; branch: string; modifiedFiles: number; appliedIssues: number; skipped?: Array<{ file: string; reason: string }> }>;
+  },
+
+  // --- PR Manager: saved drafts + audit history ---
+
+  async listDrafts() {
+    const res = await fetch(`${API_BASE}/api/pr-manager/drafts`, { ...cred });
+    if (!res.ok) throw new Error("Failed to load drafts");
+    return res.json();
+  },
+
+  async createDraft(data: Record<string, unknown>) {
+    const res = await fetch(`${API_BASE}/api/pr-manager/drafts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+      ...cred,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({} as { message?: string }));
+      throw new Error(body.message || "Failed to save draft");
+    }
+    return res.json();
+  },
+
+  async updateDraft(id: string, patch: Record<string, unknown>) {
+    const res = await fetch(`${API_BASE}/api/pr-manager/drafts/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+      ...cred,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({} as { message?: string }));
+      throw new Error(body.message || "Failed to update draft");
+    }
+    return res.json();
+  },
+
+  async deleteDraft(id: string) {
+    const res = await fetch(`${API_BASE}/api/pr-manager/drafts/${id}`, {
+      method: "DELETE",
+      ...cred,
+    });
+    if (!res.ok && res.status !== 204) throw new Error("Failed to delete draft");
+  },
+
+  async listAuditHistory(prId?: string) {
+    const url = `${API_BASE}/api/pr-manager/history${prId ? `?prId=${encodeURIComponent(prId)}` : ""}`;
+    const res = await fetch(url, { ...cred });
+    if (!res.ok) throw new Error("Failed to load audit history");
+    return res.json();
+  },
+
+  async createAuditHistory(data: Record<string, unknown>) {
+    const res = await fetch(`${API_BASE}/api/pr-manager/history`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+      ...cred,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({} as { message?: string }));
+      throw new Error(body.message || "Failed to record audit history");
+    }
     return res.json();
   },
 

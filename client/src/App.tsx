@@ -26,6 +26,8 @@ import AuditSuccessPage from "@/pages/dashboard/audit/AuditSuccessPage";
 import PullDetailPage from "@/pages/dashboard/pulls/PullDetailPage";
 import PullResultsPage from "@/pages/dashboard/pulls/PullResultsPage";
 import PullDiffPage from "@/pages/dashboard/pulls/PullDiffPage";
+import PREditPage from "@/pages/dashboard/pulls/PREditPage";
+import PRManagerPage from "@/pages/dashboard/pulls/PRManagerPage";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 
 function Router() {
@@ -41,6 +43,7 @@ function Router() {
       <ProtectedRoute path="/app/repos" component={ReposPage} />
       <ProtectedRoute path="/app/history" component={AuditHistoryPage} />
       <ProtectedRoute path="/app/pulls" component={PullsPage} />
+      <ProtectedRoute path="/app/pr-manager" component={PRManagerPage} />
       <ProtectedRoute path="/app/settings" component={SettingsPage} />
 
       {/* Audit Flow Routes */}
@@ -54,6 +57,7 @@ function Router() {
       <ProtectedRoute path="/app/pulls/:number" component={PullDetailPage} />
       <ProtectedRoute path="/app/pulls/:number/results" component={PullResultsPage} />
       <ProtectedRoute path="/app/pulls/:number/diff" component={PullDiffPage} />
+      <ProtectedRoute path="/app/pulls/:number/edit" component={PREditPage} />
 
       <Route component={NotFound} />
     </Switch>
